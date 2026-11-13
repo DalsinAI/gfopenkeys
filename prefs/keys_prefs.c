@@ -417,7 +417,8 @@ int main(void)
     ah_host *rexx;
     int rc = 0;
     if (!(GFOpenKeysBase = OpenLibrary((CONST_STRPTR)GFOPENKEYS_NAME, GFOPENKEYS_VERSION))) {
-        printf("Keys needs %s %d or newer in LIBS:\n", GFOPENKEYS_NAME, GFOPENKEYS_VERSION);
+        printf("Keys needs %s %d, with gfopencrypto.library 2.4 and gfopentls.library 1.5, in LIBS:\n",
+               GFOPENKEYS_NAME, GFOPENKEYS_VERSION);
         return 20;
     }
     NewList(&keys);
