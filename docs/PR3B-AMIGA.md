@@ -48,6 +48,7 @@ This uses the same flags as gfopencrypto's build. It links `libgfopencrypto.a` a
 ## Lab steps (an Instance-32 lab copy; never Instance-40)
 
 1. Copy `gfopenkeys.library` to `LIBS:` of the lab copy (`cradle.py` lab copy plus `install_agent`). gfopencrypto 2.4 and gfopentls 1.5 must be there.
+   - **Shipping:** Instance-32 today has gfopencrypto 2.2 and gfopentls 1.3, and the library won't open on those. The package (and GFOpenUp) must ship gfopencrypto.library 2.4 and gfopentls.library 1.5 with it (Franklin, #4).
 2. Run `GFOpenKeysTry STATUS`, then `NOPROMPT` (answers -5, no store, and opens no window), `STORE` (asks for a new passphrase twice), `FIND` ("matches"), `LOCK`, `NOPROMPT` (answers -2, locked, no window), `FIND` (asks), `DELETE` and `CHANGE` (asks for the current passphrase first). `GFOpenKeysTry` never prints a secret.
 3. **The requester, by hand on the lab screen:**
    - The first `GK_Store` asks for a new passphrase twice.
