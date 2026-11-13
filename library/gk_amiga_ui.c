@@ -52,6 +52,7 @@ static ULONG edit_hook(REG(a0, struct Hook *h), REG(a2, struct SGWork *sgw), REG
             f->len++;
         }
         f->real[new_pos - 1] = (char)sgw->WorkBuffer[new_pos - 1];
+        if (new_pos > f->len) f->len = new_pos;   /* replace mode at the end adds a character */
         sgw->WorkBuffer[new_pos - 1] = '*';
         break;
     case EO_DELBACKWARD:

@@ -58,6 +58,7 @@ static struct SignalSemaphore sem;
 static gk_lib *keys;
 static struct Window *parent;            /* the window the next requester opens over */
 static struct Process *ticker;           /* the timeout process; NULL once it has gone */
+static struct Library *self;             /* the library base, for the timeout process's checks */
 
 int start(void) { return -1; }
 
@@ -113,19 +114,33 @@ const struct Resident lib_romtag = {
 
 /* ---- the timeout process --------------------------------------------------- */
 
+/* 1 when the library is closed and waiting to be expunged (look under Forbid) */
+static int going(void) { return !self->lib_OpenCnt && (self->lib_Flags & LIBF_DELEXP); }
+
 static void ticker_main(void)
 {
     for (;;) {
-        if (CheckSignal(SIGBREAKF_CTRL_C)) break;
+        int leave;
+        if (CheckSignal(SIGBREAKF_CTRL_C)) {
+            /* Only expunge with no one left sends CTRL_C, but a program may
+             * have opened the library again since: then carry on */
+            Forbid();
+            leave = going();
+            Permit();
+            if (leave) {
+                ObtainSemaphore(&sem);
+                gkl_lock(keys);            /* written and wiped here, in a process, before expunge */
+                ReleaseSemaphore(&sem);
+                Forbid();                  /* held until this process has gone: the code can't be unloaded under it */
+                if (going()) break;
+                Permit();                  /* opened again while the store was written */
+            }
+        }
         Delay(50 * TICK_S);
         ObtainSemaphore(&sem);
         gk_is_unlocked(gkl_store(keys));   /* locks (and wipes) when the timeout has passed */
         ReleaseSemaphore(&sem);
     }
-    ObtainSemaphore(&sem);
-    gkl_lock(keys);                        /* written and wiped here, in a process, before expunge */
-    ReleaseSemaphore(&sem);
-    Forbid();                              /* held until this process has gone: the code can't be unloaded under it */
     ticker = NULL;
 }
 
@@ -148,6 +163,7 @@ static struct Library *lib_init(REG(d0, struct GFOpenKeysBase *base), REG(a0, BP
     gk_kdf kdf;
     SysBase = sys;
     base->seglist = seglist;
+    self = &base->lib;
     base->lib.lib_Revision = LIB_REVISION;
     InitSemaphore(&sem);
     /* LibInit runs in ramlib's process, so disk libraries can be opened here */
@@ -170,7 +186,7 @@ static struct Library *lib_init(REG(d0, struct GFOpenKeysBase *base), REG(a0, BP
     gk_amiga_make_drawer(DRAWER);
     if (gkl_open(&keys, &env, &ui, STORE, &kdf)) goto fail;
     ticker = CreateNewProcTags(NP_Entry, (ULONG)ticker_main, NP_Name, (ULONG)"gfopenkeys timeout",
-                               NP_Priority, 0, TAG_END);
+                               NP_Priority, 0, NP_StackSize, 16384, TAG_END);   /* gkl_lock writes through gfopencrypto */
     if (!ticker) { gkl_close(keys); keys = NULL; goto fail; }
     return &base->lib;
 fail:
@@ -199,9 +215,10 @@ static BPTR lib_close(REG(a6, struct GFOpenKeysBase *base))
 static BPTR lib_expunge(REG(a6, struct GFOpenKeysBase *base))
 {
     BPTR seglist;
-    if (base->lib.lib_OpenCnt || ticker) {
-        if (ticker) Signal(&ticker->pr_Task, SIGBREAKF_CTRL_C);
-        base->lib.lib_Flags |= LIBF_DELEXP;
+    base->lib.lib_Flags |= LIBF_DELEXP;
+    if (base->lib.lib_OpenCnt) return 0;  /* exec asks on every low-memory moment: the timeout process stays */
+    if (ticker) {
+        Signal(&ticker->pr_Task, SIGBREAKF_CTRL_C);   /* it locks, writes, and goes; the next expunge frees */
         return 0;
     }
     gkl_close(keys);                     /* already locked: frees memory only */

@@ -57,6 +57,7 @@ This uses the same flags as gfopencrypto's build. It links `libgfopencrypto.a` a
    - After closing, a scan of the lab copy's memory finds no copy of the typed passphrase.
 4. **ARexx:** a call with `GKF_NOPROMPT` while locked returns `GKE_LOCKED` at once and opens no window (ARexx-RULE.md rule 4).
 5. **Timeout:** with `GK_SetTimeout(60)`, after 61 s with no use, `GK_Status` shows locked.
+   - **Low memory (Agnus, #4):** unlock, then `Avail FLUSH` while a program still has the library open. The keys must stay unlocked straight after the flush, and STATUS must say locked once TIMEOUT 60 has passed (the timeout process is still there).
 6. **Recovery:**
    - Damage the last byte of `Default.keys`. The unlock opens `.bak`, warns, and leaves `Default.keys.bad`.
    - Then the half-done passphrase change: the old passphrase opens `.bak` read-only, with the warning.
