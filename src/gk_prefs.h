@@ -37,7 +37,7 @@ typedef struct gkp_ops {
  *   LOCK
  *   LIST [[SERVICE=]word]  escaped names, one a line; 10 when locked
  *   DELETE name            name as LIST gives it, quotes allowed
- *   TIMEOUT seconds        0 keeps the keys open until reboot; 5 when set but not saved
+ *   TIMEOUT seconds        0 never locks by itself; 5 when set but not saved
  *   VERSION, HELP, FAULT n (n a GKE_ code; 3 is taken as -3) */
 int gkp_rexx(const gkp_ops *ops, const char *line, char *result, size_t cap);
 

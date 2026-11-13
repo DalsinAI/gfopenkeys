@@ -35,7 +35,7 @@
 #define GK_MAX_OWNER     63
 #define GK_MAX_SECRET  4096
 #define GK_MAX_ENTRIES 4096
-#define GK_DEFAULT_TIMEOUT 900     /* seconds after the last use; 0 = until reboot */
+#define GK_DEFAULT_TIMEOUT 900     /* seconds after the last use; 0 = never by itself */
 
 /* The library's structures (Amiga programs; the host tests use src/gk_lib.h) */
 #ifdef EXEC_TYPES_H

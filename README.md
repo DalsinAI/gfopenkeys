@@ -16,7 +16,7 @@ Part of GFOS (AmiCradle). Design: [DESIGN.md](DESIGN.md); where GFOS programs ke
 
 ## ARexx: `GFOPENKEYS.1` (SYS:Prefs/Keys)
 
-No command returns a secret, and none opens a requester: when the keys are locked, `LIST` and `DELETE` answer RC 10. While they are unlocked, any script can `DELETE` a key through the port without a check, as any program calling `GK_Delete` can: the owner tag names a program, it is not access control (DESIGN.md section 2).
+No command returns a secret, and none opens a requester: when the keys are locked, `LIST` and `DELETE` answer RC 10. While they are unlocked, any script can `DELETE` a key through the port without a check, as any program calling `GK_Delete` can: the owner tag names a program, it is not access control (DESIGN.md section 2). In the same way, any script can turn the timeout off for good with `TIMEOUT 0`, or a program by writing `0` to `ENVARC:GFOpenKeys/Default.keys.timeout`; the prefs window then says "never locks by itself".
 
 | Command | Template | Does |
 |---|---|---|
@@ -24,7 +24,7 @@ No command returns a secret, and none opens a requester: when the keys are locke
 | `LOCK` | | Locks the keys now |
 | `LIST` | `SERVICE` | RESULT the names, one a line, as `service/host/user` with `/`, `%` and control bytes as `%XX` |
 | `DELETE` | `NAME/A` | Deletes the key of that name, as `LIST` gives it (RC 5 when there is none) |
-| `TIMEOUT` | `SECONDS/N/A` | Locks after that many seconds without use; 0 keeps the keys open until reboot |
+| `TIMEOUT` | `SECONDS/N/A` | Locks after that many seconds without use; 0 never locks by itself. Kept across reboots |
 | `FAULT` | `CODE/N/A` | RESULT the text of a gfopenkeys error code (`-3` and `3` are the same) |
 | `QUIT`, `ACTIVATE`, `DEACTIVATE`, `VERSION`, `HELP` | | As every port (ARexx-RULE.md); `DEACTIVATE` answers 5, as there is no icon |
 

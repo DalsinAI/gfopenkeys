@@ -184,7 +184,7 @@ static void show_status(void)
     else {
         char t[120];
         if (st.seconds_left == UINT32_MAX)
-            snprintf(t, sizeof t, "Unlocked, %lu keys, until you lock them%s", (unsigned long)st.count,
+            snprintf(t, sizeof t, "Unlocked, %lu keys, never locks by itself%s", (unsigned long)st.count,
                      st.readonly ? " (read-only)" : "");
         else
             snprintf(t, sizeof t, "Unlocked, %lu keys, locks in %lu min%s", (unsigned long)st.count,
@@ -245,6 +245,7 @@ static void delete_chosen(int whole_service)
 /* The timeout the library keeps (gk_lib's "<store>.timeout"), in minutes,
  * for the gadget; the default when there is none */
 #define TIMEOUT_FILE "ENVARC:GFOpenKeys/Default.keys.timeout"
+#define MAX_MINUTES 9999                /* what the 4-digit field holds (about a week) */
 static LONG saved_minutes(void)
 {
     char t[16];
@@ -257,7 +258,7 @@ static LONG saved_minutes(void)
     for (i = 0; i < n && t[i] >= '0' && t[i] <= '9' && v < 429496729UL; i++) v = v * 10 + (ULONG)(t[i] - '0');
     if (i == 0 || (i < n && t[i] != '\n')) return GK_DEFAULT_TIMEOUT / 60;
     v = (v + 59) / 60;
-    return v > 24 * 60 ? 24 * 60 : (LONG)v;
+    return v > MAX_MINUTES ? MAX_MINUTES : (LONG)v;
 }
 
 static int open_window(void)
@@ -341,8 +342,8 @@ static void press(UWORD id, UWORD code)
     case G_TIMEOUT: {
         struct StringInfo *si = (struct StringInfo *)gad[G_TIMEOUT]->SpecialInfo;
         LONG m = si->LongInt;
-        if (m < 0 || m > 24 * 60) { set_state("The timeout is 0 to 1440 minutes"); held = 1; break; }
-        if (GK_SetTimeout((ULONG)m * 60)) { set_state("Set until reboot: it couldn't be saved"); held = 1; break; }
+        if (m < 0 || m > MAX_MINUTES) { set_state("The timeout is 0 to 9999 minutes"); held = 1; break; }
+        if (GK_SetTimeout((ULONG)m * 60)) { set_state("Set for now: it couldn't be saved for the next boot"); held = 1; break; }
         show_status();
         break;
     }

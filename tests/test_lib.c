@@ -288,7 +288,7 @@ static void test_timeout_kept(void)
     CHECK(gkl_unlock(l, "T", 0) == GKE_OK);
     gkl_status(l, &st);
     CHECK(st.seconds_left == 60);
-    CHECK(gkl_set_timeout(l, 0) == GKE_OK);                    /* 0: until reboot, also kept */
+    CHECK(gkl_set_timeout(l, 0) == GKE_OK);                    /* 0: never by itself, also kept */
     gkl_close(l);
     memset(&g, 0, sizeof g); g.answers[0] = "pass";
     gkl_open(&l, &e, &ui, PATH, &KDF);
