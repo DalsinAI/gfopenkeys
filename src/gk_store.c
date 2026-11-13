@@ -362,7 +362,8 @@ static int file_save(gk_store *s)
     if (r) { s->env.remove(s->env.u, s->path_new); return GKE_IO; }
     if (s->env.read(s->env.u, s->path, &back, &bn) == GKE_OK) {
         free(back);
-        if (s->env.remove(s->env.u, s->path_bak) || s->env.rename(s->env.u, s->path, s->path_bak)) return GKE_IO;
+        s->env.remove(s->env.u, s->path_bak);   /* the rename says whether it went */
+        if (s->env.rename(s->env.u, s->path, s->path_bak)) return GKE_IO;
     }
     if (s->env.rename(s->env.u, s->path_new, s->path)) return GKE_IO;
     s->dirty = 0;
@@ -453,12 +454,17 @@ static void recover(gk_store *s)
     uint8_t *p;
     size_t n;
     char *bad = join(s->path, ".bad");
-    if (bad && s->env.read(s->env.u, s->path, &p, &n) == GKE_OK) {
+    int aside = 1;
+    if (!bad) return;
+    if (s->env.read(s->env.u, s->path, &p, &n) == GKE_OK) {
         free(p);
-        if (s->env.remove(s->env.u, bad) == GKE_OK) s->env.rename(s->env.u, s->path, bad);
+        s->env.remove(s->env.u, bad);   /* its answer doesn't matter: an old .bad may not be there */
+        aside = s->env.rename(s->env.u, s->path, bad) == GKE_OK;
     }
     free(bad);
-    file_save(s);
+    /* If the damaged file couldn't go aside, saving would move it over the
+     * good .bak: leave the files as they are, and the next unlock tries again */
+    if (aside) file_save(s);
 }
 
 int gk_unlock(gk_store *s, const char *pass, size_t pass_len)

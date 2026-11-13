@@ -19,7 +19,7 @@ typedef struct gk_env {
     int (*write)(void *u, const char *name, const uint8_t *data, size_t len);
     /* Rename; the target must not exist (as AmigaDOS): 0 or GKE_IO */
     int (*rename)(void *u, const char *from, const char *to);
-    /* Delete; a missing file is not an error: 0 or GKE_IO */
+    /* Delete: 0 or GKE_IO. A missing file may answer either way (DeleteFile() fails on one) */
     int (*remove)(void *u, const char *name);
     /* Random bytes: 0, or GKE_CRYPTO */
     int (*random)(void *u, uint8_t *out, size_t len);

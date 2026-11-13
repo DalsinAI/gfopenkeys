@@ -81,6 +81,10 @@ static int m_remove(void *u, const char *name)
     return 0;
 }
 
+/* remove() as AmigaOS DeleteFile() does it: a missing file is an error.
+ * Every test uses it, so the store never relies on the kinder answer. */
+static int m_remove_strict(void *u, const char *name) { return fs_get(u, name) ? m_remove(u, name) : GKE_IO; }
+
 static int m_random(void *u, uint8_t *out, size_t len)
 {
     fs *x = u;
@@ -98,7 +102,7 @@ static void fs_init(fs *x, gk_env *e)
     x->crash_at = -1;
     x->clock = 1000;
     x->rng = 42;
-    e->read = m_read; e->write = m_write; e->rename = m_rename; e->remove = m_remove;
+    e->read = m_read; e->write = m_write; e->rename = m_rename; e->remove = m_remove_strict;
     e->random = m_random; e->now = m_now; e->alloc = m_alloc; e->release = m_release; e->u = x;
 }
 
@@ -563,6 +567,33 @@ static void test_bad_kdf_header(void)
     }
 }
 
+static void test_recover_strict_remove(void)
+{
+    fs x; gk_env e; gk_store *s;
+    mfile *m;
+    uint8_t *bak; size_t bak_len;
+    fs_init(&x, &e);
+    gk_open(&s, &e, PATH);
+    gk_create(s, PASS, strlen(PASS), &KDF);
+    gk_put(s, "ssh", "h", "u", (const uint8_t *)"one", 3, NULL, NULL, 0);
+    gk_put(s, "ssh", "h", "u", (const uint8_t *)"two", 3, NULL, NULL, GKF_REPLACE);
+    gk_close(s);
+    gk_open(&s, &e, PATH);
+    m = fs_get(&x, PATH ".bak");
+    bak_len = m->len; bak = malloc(bak_len); memcpy(bak, m->data, bak_len);
+    m = fs_get(&x, PATH); m->data[m->len - 1] ^= 1;
+    CHECK(fs_get(&x, PATH ".bad") == NULL);
+    CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_OK && gk_opened_from(s) == 2);
+    m = fs_get(&x, PATH ".bak");
+    CHECK(m && m->len == bak_len && !memcmp(m->data, bak, bak_len));   /* the good spare is kept */
+    CHECK(fs_get(&x, PATH ".bad") != NULL);
+    gk_lock(s);
+    CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_OK && gk_opened_from(s) == 0);
+    free(bak);
+    gk_close(s);
+    fs_free(&x);
+}
+
 int main(void)
 {
     test_aead();
@@ -578,6 +609,7 @@ int main(void)
     test_counter_nonce();
     test_last_used();
     test_bad_kdf_header();
+    test_recover_strict_remove();
     printf("%d/%d checks passed\n", checks - fails, checks);
     return fails != 0;
 }
