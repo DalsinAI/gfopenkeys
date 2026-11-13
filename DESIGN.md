@@ -18,10 +18,12 @@ gfopenputty moves first. The survey of today's secrets is in [docs/SURVEY-202611
 - **It can't protect** a secret from another program on a running, unlocked Amiga. Classic AmigaOS has no memory protection, and any task can read any memory. So:
   - the unlocked data key lives in one place, the library's own memory, with a timeout;
   - secrets are handed to apps only through calls;
-  - every buffer is wiped with `OC_Cleanse` when it is finished with.
+  - every buffer is wiped with `OC_Cleanse` when it is finished with. That names three in particular: the master key, wiped as soon as the data key is unwrapped; Argon2id's work area (64 MiB on AC090), wiped before it is freed, because a block of passphrase-derived state left in Fast RAM is the likeliest leak on a machine with no memory protection; and the passphrase, including the requester's string gadget buffer and its UndoBuffer.
 
   On AC090 a later version can keep the data key on the host behind a hostlib call (section 9).
 - **No secret ever goes** to ARexx, a log, ENV:, the clipboard or a requester's default text.
+- **It can't stop a rollback** by someone who can write ENVARC:. They can put an older `.keys` back, and it opens with the passphrase that was current then. The library notices when it can (section 4, "Rolling back"), but it can't prevent it.
+- **Argon2id at 8 MiB and t = 2** (the setting for a real 68040, section 4) is weak against an offline attack on a stolen file. The prefs say so while m is below 64 MiB, and "Stronger" raises it.
 
 ## 2. The library
 
@@ -47,7 +49,7 @@ gfopenputty moves first. The survey of today's secrets is in [docs/SURVEY-202611
   - After 5 wrong passphrases, the prompt waits 2, 4, 8 seconds and so on. The prompt is the library's own.
 - **Lengths.** Secrets are at most 4096 bytes, so a private-key blob fits later. Each name part is at most 255 bytes, and a label at most 127.
 - **Concurrency.** The library is reentrant, with one semaphore round the store. Programs on other Amigas (ARexxNet) never see it.
-- **Owner tag.** Each entry records the owning program's name (`FindTask(0)->tc_Node.ln_Name` at store time) for the prefs. It is a label, not access control: on AmigaOS any program can call the library.
+- **Owner tag.** Each entry records the owning program's name (`FindTask(0)->tc_Node.ln_Name` at store time) for the prefs. It is a label, not access control: on AmigaOS any program can call the library. The name can be NULL or a string that is about to go, so the library copies it under `Forbid()`, at most 63 bytes, and uses "(unnamed)" for NULL. Any program can set its own name, so the unlock requester says "a program calling itself ...".
 
 ## 3. Naming: `service/host/user`
 
@@ -83,30 +85,41 @@ gfopenputty moves first. The survey of today's secrets is in [docs/SURVEY-202611
 "GFKS" 0x01 0x00 0x00 0x00               magic, version 1, reserved
 kdf:   type (2 = Argon2id), passes, m_kib, lanes, salt[16]
 wrap:  nonce[8], data key sealed: ciphertext[32] + tag[16]
+count: the write counter (64 bits)
 body:  salt[32], length, ciphertext[length] + tag[16]
 ```
 
 - **The master key** comes from Argon2id(passphrase, salt, passes, m_kib, lanes) and is 32 bytes. It is used only to unwrap the random 32-byte data key.
 - **The data key** is made once, when the store is created. A passphrase change re-wraps only this key.
+- **Every wrap draws a new KDF salt and a new wrap nonce**: at creation, at `GK_ChangePassphrase`, and at "Stronger" (even with the same passphrase). The library then writes the store twice, so `.bak` is under the new passphrase too and an old passphrase that leaked opens no copy.
 - **Sealing** is ChaCha20-Poly1305 in the 64-bit-nonce construction gfopencrypto's `OC_ChaCha20` gives (draft-agl-tls-chacha20poly1305, the same as libsodium's original `crypto_aead_chacha20poly1305`):
   - the Poly1305 key is block 0's key stream;
   - the data is encrypted from block 1;
   - the tag covers the associated data, its 64-bit length, the ciphertext and its 64-bit length.
 
   The tests check it against the published vectors.
-- **The body key** is HKDF-SHA256(data key, the body's fresh random 32-byte salt, "gfopenkeys body v1"), with a zero nonce. Every write has a new salt and so a new key, so a nonce is never reused, however many writes there are.
-- **Associated data** is the file header up to the body (magic, kdf, wrap). Changing the KDF settings or swapping the wrapped key breaks the tag.
-- **The body, once opened,** is the entry count, then each entry as length-prefixed fields: service, host, user, label, owner, created, last-used and secret.
+- **The body key** is HKDF-SHA256(data key, the body's fresh random 32-byte salt, "gfopenkeys body v1"). **The body nonce is the write counter**, which goes up by one on every write. Every write therefore has a new key from the new salt, and also a new nonce under the same data key. Even if the random source repeated a salt (section 4a), the key and nonce pair would still not repeat.
+- **Associated data** is the file header up to the body (magic, kdf, wrap, write counter). Changing the KDF settings, swapping the wrapped key or changing the counter breaks the tag.
+- **The body, once opened,** is "GKB1", the entry count, then each entry as length-prefixed fields: service, host, user, label, owner, created, last-used and secret.
 - **Writing.** The library writes `<user>.keys.new`, flushes it and reads it back to check it opens, then renames it over the old file. The old file becomes `.bak` first. A crash at any step leaves a good `.keys` or `.bak`, and the library opens `.bak` when `.keys` is damaged.
+- **Rolling back.** Opening `.bak` means the newest change may be gone. The unlock requester says "an older copy was opened" (with `GKF_NOPROMPT`, `GK_Status` reports it), and the prefs show it until the next write. The library also keeps the highest counter it has seen in `ENVARC:GFOpenKeys/<user>.count` (not secret) and warns when a store opens with a lower one. That catches an older whole file copied over `.keys`. Someone who can also edit `.count` can still roll back (section 1).
 - **Argon2id settings are chosen when the store is made** and kept in the header, so a store moved to another machine still opens, only slower or faster:
   - AC090 and native: m = 65536 KiB (64 MiB), t = 3;
   - a real 68040 or 68060: m = 8192 KiB, t = 2, aiming at about a second there;
   - the prefs' "Stronger" button raises them with `GK_ChangePassphrase`.
+- **A store made with 64 MiB may not open on a real 68040** that has less free memory. The library then returns `GKE_NOMEM` and says plainly "this store needs 64 MiB free to open". It never falls back to weaker settings.
 
+### 4a. Randomness
+
+The body's salt, the KDF salt, the wrap nonce and the data key all come from `OT_Random` (gfopentls). The write counter means a repeated body salt can't reuse a nonce, but the data key and the KDF salt still have to be unpredictable. So:
+- **What `OT_Random` is today** (openamigatls `src/opentls/ot_random.c`) is an HMAC-DRBG (SHA-256). On every Amiga, 68k, AC090 and native alike, it is seeded from 512 samples, hashed, of the jitter between the E-clock and the scheduler, plus the idle and dispatch counts, free memory and the DateStamp. Each call mixes in 4 fresh samples and a call counter.
+- **AC090 and native** add host entropy. A hostlib call that returns the host's `getrandom()` is mixed into the first seed. It is asked of Team 5 as a gfopentls item, and gfopenkeys works without it.
+- **A real 68k** has only the jitter, and on a cold boot that is weakest. The library keeps a 32-byte seed file, `ENVARC:GFOpenKeys/seed`. It is mixed in through `OT_Random`'s update and replaced after every use, so two cold boots never start from the same state. The file is not secret on its own, because it is mixed with the jitter. The library refuses to create a store (`GKE_CRYPTO`) when `OT_Random` reports that it couldn't gather (no timer.device), rather than make keys from a weak seed.
 ## 5. Unlocking and the timeout
 
 - **The first `GK_Find`/`GK_List` after boot** (or after locking) opens one requester: "Unlock your keys", with the passphrase and the owning program's name, so the user knows who is asking.
 - **One unlock serves every program** until the timeout. It is measured from the last use, 15 minutes by default, and set in the prefs.
+- **What counts as use** (restarts the timer): unlocking, `GK_Find`, `GK_Store`, `GK_Delete`, `GK_Import` and `GK_ChangePassphrase`. `GK_Status` and `GK_List` do not, so a prefs window left open never keeps the store unlocked.
 - **Locking happens on**:
   - the timeout;
   - `GK_Lock` (the prefs' Lock button, the ARexx `LOCK`);
@@ -164,11 +177,14 @@ Each app's migration PR carries a host unit test:
 
 - **Host unit tests** (`tests/`, run by `ci/run_tests.sh`), built against a host copy of the gfopencrypto calls:
   - the AEAD against draft-agl and libsodium vectors;
-  - Argon2id against RFC 9106 vectors;
+  - Argon2id against RFC 9106 vectors (gfopencrypto's own tests; the store uses its code as it is);
   - store, find, list, delete and import round trips;
   - a wrong passphrase gives `GKE_BADPASS`;
   - a header, wrap or body with one bit flipped is refused;
-  - a cut-off write, with a reset at each step, recovers from `.bak`;
+  - a cut-off write, with a reset at each step, recovers from `.bak`, and opening `.bak` is reported;
+  - a write that stores bad bytes is caught by the read-back;
+  - the body nonce is the write counter, and a repeated random salt still gives a new nonce;
+  - a passphrase change draws a new salt and wrap nonce and leaves no copy that the old passphrase opens;
   - escaping of every reserved character;
   - the timeout, using a fake clock;
   - `GKF_NOPROMPT` never prompts.
