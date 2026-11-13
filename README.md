@@ -8,7 +8,9 @@ Part of GFOS (AmiCradle). Design: [DESIGN.md](DESIGN.md); where GFOS programs ke
 
 - `include/libraries/gfopenkeys.h`: error codes, flags, limits and the service names, for every program that keeps a secret.
 - `src/gk_store.c`, `src/gk_store.h`: the keystore's core in plain C. The file system, random source and clock come in through `gk_env`, so the host tests build exactly the code the library runs.
-- `tests/test_store.c`: host tests, with an in-memory file system that can fail at any write, rename or remove.
+- `src/gk_lib.c`, `src/gk_lib.h`: what the library does on top of the store: asking (never with `GKF_NOPROMPT`), the wait after wrong passphrases, the owner tag, the rollback check, read-only after an older passphrase, and asking for the current passphrase before a change. The requester is a `gk_ui`, so the host tests script it.
+- `tests/test_store.c`, `tests/test_lib.c`: host tests, with an in-memory file system (`tests/fake_env.h`) that can fail at any write, rename or remove.
+- `docs/PR3B-AMIGA.md`: what the Amiga library and its requester need (files, build, lab steps).
 
 ## Tests
 

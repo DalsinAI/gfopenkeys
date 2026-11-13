@@ -3,120 +3,7 @@
  * crash at each point of a write can be checked. Argon2id runs small
  * (8 KiB, 1 pass) so the tests are quick; the format carries the settings.
  * MIT, Copyright (c) 2026 AmiCradle Team. */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "gk_store.h"
-
-static int fails, checks;
-#define CHECK(c) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
-
-/* ---- an in-memory file system --------------------------------------------- */
-
-#define FILES 8
-typedef struct mfile { char name[64]; uint8_t *data; size_t len; int used; } mfile;
-typedef struct fs {
-    mfile f[FILES];
-    long ops;          /* write/rename/remove calls so far */
-    long crash_at;     /* the op that "loses power" (and every one after it); -1 none */
-    int corrupt_write; /* flip a bit in what the next write stores */
-    uint64_t clock;
-    uint32_t rng;
-} fs;
-
-static mfile *fs_get(fs *x, const char *name)
-{
-    int i;
-    for (i = 0; i < FILES; i++) if (x->f[i].used && !strcmp(x->f[i].name, name)) return &x->f[i];
-    return NULL;
-}
-
-static int dead(fs *x) { return x->crash_at >= 0 && x->ops++ >= x->crash_at; }
-
-static int m_read(void *u, const char *name, uint8_t **data, size_t *len)
-{
-    mfile *m = fs_get(u, name);
-    if (!m) return GKE_NOTFOUND;
-    *data = malloc(m->len ? m->len : 1);
-    if (!*data) return GKE_IO;
-    memcpy(*data, m->data, m->len);
-    *len = m->len;
-    return 0;
-}
-
-static int m_write(void *u, const char *name, const uint8_t *data, size_t len)
-{
-    fs *x = u;
-    mfile *m;
-    int i;
-    if (dead(x)) return GKE_IO;
-    if (!(m = fs_get(x, name)))
-        for (i = 0; i < FILES && !m; i++) if (!x->f[i].used) { m = &x->f[i]; m->used = 1; strcpy(m->name, name); m->data = NULL; }
-    if (!m) return GKE_IO;
-    free(m->data);
-    m->data = malloc(len ? len : 1);
-    memcpy(m->data, data, len);
-    m->len = len;
-    if (x->corrupt_write && len > 100) { m->data[len - 20] ^= 1; x->corrupt_write = 0; }
-    return 0;
-}
-
-static int m_rename(void *u, const char *from, const char *to)
-{
-    fs *x = u;
-    mfile *m;
-    if (dead(x)) return GKE_IO;
-    if (fs_get(x, to) || !(m = fs_get(x, from))) return GKE_IO;
-    strcpy(m->name, to);
-    return 0;
-}
-
-static int m_remove(void *u, const char *name)
-{
-    fs *x = u;
-    mfile *m;
-    if (dead(x)) return GKE_IO;
-    if ((m = fs_get(x, name))) { free(m->data); memset(m, 0, sizeof *m); }
-    return 0;
-}
-
-/* remove() as AmigaOS DeleteFile() does it: a missing file is an error.
- * Every test uses it, so the store never relies on the kinder answer. */
-static int m_remove_strict(void *u, const char *name) { return fs_get(u, name) ? m_remove(u, name) : GKE_IO; }
-
-static int m_random(void *u, uint8_t *out, size_t len)
-{
-    fs *x = u;
-    while (len--) { x->rng = x->rng * 1103515245u + 12345u; *out++ = (uint8_t)(x->rng >> 16); }
-    return 0;
-}
-
-static uint64_t m_now(void *u) { return ((fs *)u)->clock; }
-static void *m_alloc(void *u, size_t len) { (void)u; return malloc(len); }
-static void m_release(void *u, void *p, size_t len) { (void)u; (void)len; free(p); }
-
-static void fs_init(fs *x, gk_env *e)
-{
-    memset(x, 0, sizeof *x);
-    x->crash_at = -1;
-    x->clock = 1000;
-    x->rng = 42;
-    e->read = m_read; e->write = m_write; e->rename = m_rename; e->remove = m_remove_strict;
-    e->random = m_random; e->now = m_now; e->alloc = m_alloc; e->release = m_release; e->u = x;
-}
-
-static void fs_free(fs *x) { int i; for (i = 0; i < FILES; i++) free(x->f[i].data); memset(x->f, 0, sizeof x->f); }
-
-static void fs_copy(fs *to, const fs *from)
-{
-    int i;
-    fs_free(to);
-    for (i = 0; i < FILES; i++) {
-        to->f[i] = from->f[i];
-        if (from->f[i].used) { to->f[i].data = malloc(from->f[i].len ? from->f[i].len : 1); memcpy(to->f[i].data, from->f[i].data, from->f[i].len); }
-    }
-}
+#include "fake_env.h"
 
 static const gk_kdf KDF = { 1, 8, 1 };
 #define PATH "ENVARC:GFOpenKeys/Default.keys"
@@ -617,9 +504,43 @@ static void test_old_pass_after_half_change(void)
     m = fs_get(&x, PATH);
     CHECK(m && m->len == keep_len && !memcmp(m->data, keep, keep_len));   /* left where it was */
     CHECK(fs_get(&x, PATH ".bad") == NULL);
-    gk_lock(s);
+    /* read-only, so no save can undo the change (Franklin, #2) */
+    CHECK(gk_is_readonly(s));
+    {
+        uint8_t b[8]; size_t n = sizeof b, added;
+        gk_import_item it = { "ftp", "a", "u", NULL, (const uint8_t *)"x", 1 };
+        CHECK(gk_find(s, "ssh", "h", "u", b, &n) == GKE_OK);
+        CHECK(gk_put(s, "ftp", "a", "u", (const uint8_t *)"x", 1, NULL, NULL, 0) == GKE_READONLY);
+        CHECK(gk_delete(s, "ssh", "h", "u") == GKE_READONLY);
+        CHECK(gk_import(s, &it, 1, "t", 0, &added) == GKE_READONLY);
+        CHECK(gk_change_pass(s, "x", 1, &KDF) == GKE_READONLY);
+    }
+    gk_lock(s);                                 /* the find's last-used is not written either */
+    m = fs_get(&x, PATH);
+    CHECK(m && m->len == keep_len && !memcmp(m->data, keep, keep_len));
     CHECK(gk_unlock(s, "new pass", 8) == GKE_OK && gk_opened_from(s) == 0);
+    CHECK(!gk_is_readonly(s));
+    CHECK(gk_put(s, "ftp", "a", "u", (const uint8_t *)"x", 1, NULL, NULL, 0) == GKE_OK);
+    gk_lock(s);
+    CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_BADPASS);   /* the change is kept */
     free(keep);
+    gk_close(s);
+    fs_free(&x);
+}
+
+static void test_check_pass(void)
+{
+    fs x; gk_env e; gk_store *s;
+    fs_init(&x, &e);
+    gk_open(&s, &e, PATH);
+    CHECK(gk_check_pass(s, PASS, strlen(PASS)) == GKE_LOCKED);
+    gk_create(s, PASS, strlen(PASS), &KDF);
+    CHECK(gk_check_pass(s, PASS, strlen(PASS)) == GKE_OK);
+    CHECK(gk_check_pass(s, "nope", 4) == GKE_BADPASS);
+    CHECK(gk_check_pass(s, PASS, strlen(PASS) - 1) == GKE_BADPASS);
+    gk_change_pass(s, "new pass", 8, &KDF);
+    CHECK(gk_check_pass(s, PASS, strlen(PASS)) == GKE_BADPASS);
+    CHECK(gk_check_pass(s, "new pass", 8) == GKE_OK);
     gk_close(s);
     fs_free(&x);
 }
@@ -641,6 +562,7 @@ int main(void)
     test_bad_kdf_header();
     test_recover_strict_remove();
     test_old_pass_after_half_change();
+    test_check_pass();
     printf("%d/%d checks passed\n", checks - fails, checks);
     return fails != 0;
 }

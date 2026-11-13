@@ -29,10 +29,13 @@ build() {
         $CC -std=c99 -O1 -I"$tls/include" -I"$tls/src" "$@" -c "$f" -o "$o"
         objs="$objs $o"
     done
-    $CC $flags -O1 "$@" "$here/src/gk_store.c" "$here/tests/test_store.c" $objs -o "$work/$out"
+    $CC $flags -I"$here/tests" -O1 "$@" "$here/src/gk_store.c" "$here/tests/test_store.c" $objs -o "$work/store-$out"
+    $CC $flags -I"$here/tests" -O1 "$@" "$here/src/gk_store.c" "$here/src/gk_lib.c" "$here/tests/test_lib.c" $objs -o "$work/lib-$out"
 }
 build plain
-"$work/plain"
+"$work/store-plain"
+"$work/lib-plain"
 build asan -g -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
-"$work/asan"
+"$work/store-asan"
+"$work/lib-asan"
 echo "gfopenkeys host tests: PASS"
