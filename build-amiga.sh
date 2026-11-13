@@ -4,7 +4,7 @@
 #   OPENAMIGATLS an openamigatls checkout already built with its build-amiga.sh
 #                (for libgfopencrypto.a, libgfopentls.a and their headers)
 #   OUT          the output directory (default build-amiga)
-# Outputs: lib/gfopenkeys.library, tests/GFOpenKeysTry, and include/ for programs.
+# Outputs: lib/gfopenkeys.library, prefs/Keys (SYS:Prefs/Keys), tests/GFOpenKeysTry, and include/ for programs.
 # MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -17,7 +17,7 @@ TLSOUT="$TLS/build-amiga"
 SPECS="$TLS/specs/m68k-soft-m68040.specs"
 
 python3 "$HERE/tools/gen_headers.py"
-mkdir -p "$OUT/lib" "$OUT/tests" "$OUT/obj" "$OUT/include"
+mkdir -p "$OUT/lib" "$OUT/prefs" "$OUT/tests" "$OUT/obj" "$OUT/include"
 cp -R "$HERE/include/." "$OUT/include/"
 
 # The same flags as gfopencrypto's own build (openamigatls build-amiga.sh says why each is there)
@@ -38,3 +38,11 @@ fi
 
 "$CC" $CFLAGS -noixemul -I"$OUT/include" -o "$OUT/tests/GFOpenKeysTry" "$HERE/tests/amiga_try.c"
 echo "$OUT/tests/GFOpenKeysTry"
+"$CC" $CFLAGS -noixemul -I"$OUT/include" -o "$OUT/tests/GFOpenKeysLoaded" "$HERE/tests/amiga_loaded.c"
+echo "$OUT/tests/GFOpenKeysLoaded"
+
+# The prefs editor: a program, so it links the stubs as any program does
+# (gk_store.c is in it only for the name escape and check gk_prefs.c uses)
+"$CC" $CFLAGS -noixemul -I"$OUT/include" -I"$HERE/prefs" -o "$OUT/prefs/Keys" \
+  "$HERE/prefs/keys_prefs.c" "$HERE/src/gk_prefs.c" "$HERE/src/gk_store.c" -L"$TLSOUT/lib" -lgfopencrypto -lamiga
+echo "$OUT/prefs/Keys"

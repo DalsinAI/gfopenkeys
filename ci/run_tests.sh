@@ -31,11 +31,14 @@ build() {
     done
     $CC $flags -I"$here/tests" -O1 "$@" "$here/src/gk_store.c" "$here/tests/test_store.c" $objs -o "$work/store-$out"
     $CC $flags -I"$here/tests" -O1 "$@" "$here/src/gk_store.c" "$here/src/gk_lib.c" "$here/tests/test_lib.c" $objs -o "$work/lib-$out"
+    $CC $flags -I"$here/tests" -O1 "$@" "$here/src/gk_store.c" "$here/src/gk_lib.c" "$here/src/gk_prefs.c" "$here/tests/test_prefs.c" $objs -o "$work/prefs-$out"
 }
 build plain
 "$work/store-plain"
 "$work/lib-plain"
+"$work/prefs-plain"
 build asan -g -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
 "$work/store-asan"
 "$work/lib-asan"
+"$work/prefs-asan"
 echo "gfopenkeys host tests: PASS"
