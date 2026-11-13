@@ -87,7 +87,8 @@ body:  salt[32], length, ciphertext[length] + tag[16]
 ```
 
 - **The master key** comes from Argon2id(passphrase, salt, passes, m_kib, lanes) and is 32 bytes. It is used only to unwrap the random 32-byte data key.
-- **The data key** is made once, when the store is created. A passphrase change re-wraps only this key.
+- **The data key** is made once, when the store is created. A passphrase change re-wraps only this key, with a new Argon2id salt and a new wrap nonce every time (`GK_ChangePassphrase` and "Stronger" alike). The library then saves twice, so `.bak` is under the new passphrase too and an old passphrase that leaked opens no copy.
+- **The master key and the passphrase are wiped** (`OC_Cleanse`) as soon as the data key is unwrapped. That includes the requester's string gadget buffer and its UndoBuffer; the requester shows dots, never what is typed.
 - **Sealing** is ChaCha20-Poly1305 in the 64-bit-nonce construction gfopencrypto's `OC_ChaCha20` gives (draft-agl-tls-chacha20poly1305, the same as libsodium's original `crypto_aead_chacha20poly1305`):
   - the Poly1305 key is block 0's key stream;
   - the data is encrypted from block 1;
@@ -96,17 +97,21 @@ body:  salt[32], length, ciphertext[length] + tag[16]
   The tests check it against the published vectors.
 - **The body key** is HKDF-SHA256(data key, the body's fresh random 32-byte salt, "gfopenkeys body v1"), with a zero nonce. Every write has a new salt and so a new key, so a nonce is never reused, however many writes there are.
 - **Associated data** is the file header up to the body (magic, kdf, wrap). Changing the KDF settings or swapping the wrapped key breaks the tag.
-- **The body, once opened,** is the entry count, then each entry as length-prefixed fields: service, host, user, label, owner, created, last-used and secret.
+- **The body, once opened,** is "GKB1", a 64-bit write counter (one more on every save), the entry count, then each entry as length-prefixed fields: service, host, user, label, owner, created, last-used and secret.
 - **Writing.** The library writes `<user>.keys.new`, flushes it and reads it back to check it opens, then renames it over the old file. The old file becomes `.bak` first. A crash at any step leaves a good `.keys` or `.bak`, and the library opens `.bak` when `.keys` is damaged.
+- **Rolling back.** Opening `.bak` means the newest change may be gone, or someone put an older file back. The library says so: the unlock requester (or, with `GKF_NOPROMPT`, `GK_Status`) reports "an older copy was opened" with its write counter, and the prefs show it until the next save. The counter is inside the sealed body, so it can't be changed without the data key. The library also keeps the highest counter it has seen in `ENVARC:GFOpenKeys/<user>.gen` (not secret) and warns when a store opens with a lower one, which catches an older whole file copied over `.keys`. Someone who can also edit `.gen` can still roll back; that is inside section 1's "anyone holding the disk" limit.
 - **Argon2id settings are chosen when the store is made** and kept in the header, so a store moved to another machine still opens, only slower or faster:
   - AC090 and native: m = 65536 KiB (64 MiB), t = 3;
   - a real 68040 or 68060: m = 8192 KiB, t = 2, aiming at about a second there;
   - the prefs' "Stronger" button raises them with `GK_ChangePassphrase`.
+- **A store made with 64 MiB may not open on a real 68040** with less free memory. The library then returns `GKE_NOMEM` and says so in plain words ("this store needs 64 MiB free to open"); it never falls back to weaker settings. Moving a store to a small machine means lowering the settings with "Stronger"'s opposite on the big one first.
 
 ## 5. Unlocking and the timeout
 
 - **The first `GK_Find`/`GK_List` after boot** (or after locking) opens one requester: "Unlock your keys", with the passphrase and the owning program's name, so the user knows who is asking.
 - **One unlock serves every program** until the timeout. It is measured from the last use, 15 minutes by default, and set in the prefs.
+- **What counts as use** (restarts the timer): unlocking, `GK_Find`, `GK_Store`, `GK_Delete`, `GK_Import` and `GK_ChangePassphrase`. `GK_Status` and `GK_List` do not, so the prefs window left open never keeps the store unlocked.
+- **The program's name on the requester** comes from its task's `ln_Name`, which any program can set. It tells the user who is asking, but it is not proof: a program can claim to be another. The requester says "a program calling itself ...".
 - **Locking happens on**:
   - the timeout;
   - `GK_Lock` (the prefs' Lock button, the ARexx `LOCK`);
@@ -164,11 +169,13 @@ Each app's migration PR carries a host unit test:
 
 - **Host unit tests** (`tests/`, run by `ci/run_tests.sh`), built against a host copy of the gfopencrypto calls:
   - the AEAD against draft-agl and libsodium vectors;
-  - Argon2id against RFC 9106 vectors;
+  - Argon2id against RFC 9106 vectors (gfopencrypto's own tests; the store's tests use its code as it is);
   - store, find, list, delete and import round trips;
   - a wrong passphrase gives `GKE_BADPASS`;
   - a header, wrap or body with one bit flipped is refused;
-  - a cut-off write, with a reset at each step, recovers from `.bak`;
+  - a cut-off write, with a reset at each step, recovers from `.bak`, and opening `.bak` is reported;
+  - a write that stores bad bytes is caught by the read-back;
+  - a passphrase change leaves no copy that the old passphrase opens;
   - escaping of every reserved character;
   - the timeout, using a fake clock;
   - `GKF_NOPROMPT` never prompts.

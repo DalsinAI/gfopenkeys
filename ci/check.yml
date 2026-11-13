@@ -1,0 +1,29 @@
+name: CI (gfopenkeys)
+
+# NOT a GitHub Actions workflow (it lives outside .github/workflows): Team 5's repo-ci.sh on
+# daletop reads this job and runs its steps on amigachromebuild in ubuntu:24.04, and posts the
+# result as the commit status m68k-daletop (CI.md). Keep it in the workflow format: repo-ci.sh
+# runs each `run:` step as written.
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: [self-hosted, amicradle-validate]
+    container: ubuntu:24.04
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      DEBIAN_FRONTEND: noninteractive
+    timeout-minutes: 20
+    steps:
+      - name: Base packages
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential git ca-certificates
+      - uses: actions/checkout@v4
+      # run_tests.sh fetches gfopencrypto's C (openamigatls) at the commit it pins
+      - name: Host tests (plain, then ASan and UBSan)
+        run: sh ci/run_tests.sh
