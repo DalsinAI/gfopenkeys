@@ -219,20 +219,25 @@ static void delete_chosen(int whole_service)
 {
     row *r = chosen >= 0 ? row_at(chosen) : NULL;
     char name[96];
+    LONG first = 0, e;
     if (!r) { set_state("Choose a key in the list first"); return; }
     if (whole_service) {
         struct Node *n, *next;
         if (!ask("Keys", "Delete every key of the service\n%s?", "Delete|Cancel", r->service)) return;
         for (n = keys.lh_Head; (next = n->ln_Succ); n = next) {
             row *x = (row *)n;
-            if (!strcmp(x->service, r->service) && x != r)
-                GK_Delete((CONST_STRPTR)x->service, (CONST_STRPTR)x->host, (CONST_STRPTR)x->user, 0);
+            if (!strcmp(x->service, r->service) && x != r) {
+                e = GK_Delete((CONST_STRPTR)x->service, (CONST_STRPTR)x->host, (CONST_STRPTR)x->user, 0);
+                if (e && !first) first = e;       /* the first failure is the one to show */
+            }
         }
     } else {
         gkp_name(r->service, r->host, r->user, name, sizeof name);
         if (!ask("Keys", "Delete the key\n%s?", "Delete|Cancel", name)) return;
     }
-    report(GK_Delete((CONST_STRPTR)r->service, (CONST_STRPTR)r->host, (CONST_STRPTR)r->user, 0));
+    e = GK_Delete((CONST_STRPTR)r->service, (CONST_STRPTR)r->host, (CONST_STRPTR)r->user, 0);
+    report(first ? first : e);
+    dirty = 1;                                    /* some may have gone even when one failed */
 }
 
 static int open_window(void)

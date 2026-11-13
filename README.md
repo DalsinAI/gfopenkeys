@@ -16,7 +16,7 @@ Part of GFOS (AmiCradle). Design: [DESIGN.md](DESIGN.md); where GFOS programs ke
 
 ## ARexx: `GFOPENKEYS.1` (SYS:Prefs/Keys)
 
-No command returns a secret, and none opens a requester: when the keys are locked, `LIST` and `DELETE` answer RC 10.
+No command returns a secret, and none opens a requester: when the keys are locked, `LIST` and `DELETE` answer RC 10. While they are unlocked, any script can `DELETE` a key through the port without a check, as any program calling `GK_Delete` can: the owner tag names a program, it is not access control (DESIGN.md section 2).
 
 | Command | Template | Does |
 |---|---|---|
