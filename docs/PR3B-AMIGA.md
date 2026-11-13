@@ -59,7 +59,7 @@ This uses the same flags as gfopencrypto's build. It links `libgfopencrypto.a` a
 4. **ARexx:** a call with `GKF_NOPROMPT` while locked returns `GKE_LOCKED` at once and opens no window (ARexx-RULE.md rule 4).
 5. **Timeout:** with `GK_SetTimeout(60)`, after 61 s with no use, `GK_Status` shows locked.
    - **Low memory (Agnus, #4):** unlock, then `Avail FLUSH` while a program still has the library open. The keys must stay unlocked straight after the flush, and STATUS must say locked once TIMEOUT 60 has passed (the timeout process is still there).
-   - **Unloading:** quit every program that has it open, then `Avail FLUSH`; `GFOpenKeysLoaded` (built with the rest) must say "not in memory" and "timeout process: gone" (RC 0). It looks at exec's library list without opening the library.
+   - **Unloading:** quit every program that has it open, then `Avail FLUSH`; `GFOpenKeysLoaded` (built with the rest) must say "not in memory" and "timeout process: gone" (RC 0). The first flush only asks the timeout process to go (it writes and wipes the store first, within a second); the library leaves at the next flush, as with any library that keeps a process. It looks at exec's library list without opening the library.
 6. **Recovery:**
    - Damage the last byte of `Default.keys`. The unlock opens `.bak`, warns, and leaves `Default.keys.bad`.
    - Then the half-done passphrase change: the old passphrase opens `.bak` read-only, with the warning.

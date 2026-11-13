@@ -136,7 +136,10 @@ static void ticker_main(void)
                 Permit();                  /* opened again while the store was written */
             }
         }
-        Delay(50 * TICK_S);
+        {
+            int i;   /* a second at a time, so an expunge's CTRL_C is seen within one */
+            for (i = 0; i < TICK_S && !(SetSignal(0, 0) & SIGBREAKF_CTRL_C); i++) Delay(50);
+        }
         ObtainSemaphore(&sem);
         gk_is_unlocked(gkl_store(keys));   /* locks (and wipes) when the timeout has passed */
         ReleaseSemaphore(&sem);
