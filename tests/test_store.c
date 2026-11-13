@@ -519,6 +519,50 @@ static void test_last_used(void)
     fs_free(&x);
 }
 
+static void *m_alloc_small(void *u, size_t len) { (void)u; return len > 64u * 1024 * 1024 ? NULL : malloc(len); }
+
+static void set32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
+
+/* A flipped bit in the store's m_kib asks for more memory than there is (or
+ * more than the cap): the unlock goes on to .bak, which opens; the damaged
+ * file goes aside to .bad and the good .bak is kept */
+static void test_bad_kdf_header(void)
+{
+    static const uint32_t ms[2] = { 0x00100000u, 0x00400000u };   /* 1 GiB: NOMEM here; 4 GiB: over the cap */
+    int k;
+    for (k = 0; k < 2; k++) {
+        fs x; gk_env e; gk_store *s;
+        mfile *m;
+        uint8_t *bak; size_t bak_len;
+        fs_init(&x, &e);
+        e.alloc = m_alloc_small;
+        gk_open(&s, &e, PATH);
+        gk_create(s, PASS, strlen(PASS), &KDF);
+        gk_put(s, "ssh", "h", "u", (const uint8_t *)"one", 3, NULL, NULL, 0);
+        gk_put(s, "ssh", "h", "u", (const uint8_t *)"two", 3, NULL, NULL, GKF_REPLACE);
+        gk_lock(s);
+        m = fs_get(&x, PATH ".bak");
+        bak_len = m->len; bak = malloc(bak_len); memcpy(bak, m->data, bak_len);
+        set32(fs_get(&x, PATH)->data + 16, ms[k]);       /* m_kib */
+        CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_OK);
+        CHECK(gk_opened_from(s) == 2 && has(s, "ssh", "h", "u", "one"));
+        m = fs_get(&x, PATH ".bak");
+        CHECK(m && m->len == bak_len && !memcmp(m->data, bak, bak_len));   /* the good spare is kept */
+        CHECK(fs_get(&x, PATH ".bad") != NULL);
+        gk_lock(s);
+        CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_OK && gk_opened_from(s) == 0);
+        /* every copy asking too much: NOMEM, not DAMAGED, when it was memory */
+        gk_lock(s);
+        set32(fs_get(&x, PATH)->data + 16, ms[k]);
+        set32(fs_get(&x, PATH ".bak")->data + 16, ms[k]);
+        m_remove(&x, PATH ".new");
+        CHECK(gk_unlock(s, PASS, strlen(PASS)) == (k == 0 ? GKE_NOMEM : GKE_DAMAGED));
+        free(bak);
+        gk_close(s);
+        fs_free(&x);
+    }
+}
+
 int main(void)
 {
     test_aead();
@@ -533,6 +577,7 @@ int main(void)
     test_change_pass();
     test_counter_nonce();
     test_last_used();
+    test_bad_kdf_header();
     printf("%d/%d checks passed\n", checks - fails, checks);
     return fails != 0;
 }

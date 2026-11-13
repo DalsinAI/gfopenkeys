@@ -270,8 +270,10 @@ static int master_key(gk_store *s, uint8_t mk[KEY], const uint8_t *head, const c
     size_t need;
     void *mem;
     int r;
-    if (type != OC_ARGON2ID || !passes || passes > 64 || lanes != 1 || m < 8 || m > 4u * 1024 * 1024) return GKE_DAMAGED;
+    /* at most 1 GiB: 4 GiB would wrap a 32-bit size_t on the Amiga to a tiny block */
+    if (type != OC_ARGON2ID || !passes || passes > 64 || lanes != 1 || m < 8 || m > 1024u * 1024) return GKE_DAMAGED;
     need = oc_argon2_memory(m, lanes);
+    if (!need) return GKE_DAMAGED;
     if (!(mem = s->env.alloc(s->env.u, need))) return GKE_NOMEM;
     r = oc_argon2(OC_ARGON2ID, mk, KEY, pass, pass_len, head + HEAD_KDF + 16, 16, NULL, 0, NULL, 0, passes, m, lanes, mem);
     s->env.release(s->env.u, mem, need);
@@ -444,10 +446,25 @@ int gk_create(gk_store *s, const char *pass, size_t pass_len, const gk_kdf *kdf)
     return GKE_OK;
 }
 
+/* After opening .new or .bak: a damaged store file goes aside to ".bad",
+ * so the save doesn't move it over the good .bak; then save under the name */
+static void recover(gk_store *s)
+{
+    uint8_t *p;
+    size_t n;
+    char *bad = join(s->path, ".bad");
+    if (bad && s->env.read(s->env.u, s->path, &p, &n) == GKE_OK) {
+        free(p);
+        if (s->env.remove(s->env.u, bad) == GKE_OK) s->env.rename(s->env.u, s->path, bad);
+    }
+    free(bad);
+    file_save(s);
+}
+
 int gk_unlock(gk_store *s, const char *pass, size_t pass_len)
 {
     const char *names[3];
-    int i, r, bad_pass = 0, any = 0;
+    int i, r, bad_pass = 0, any = 0, other = 0;
     gk_lock(s);
     /* .new first after the name: it was read back and checked before the old file went to .bak */
     names[0] = s->path; names[1] = s->path_new; names[2] = s->path_bak;
@@ -461,14 +478,17 @@ int gk_unlock(gk_store *s, const char *pass, size_t pass_len)
             s->unlocked = 1;
             s->from = i;
             touch(s);
-            if (i) file_save(s);      /* put the good copy back under the name */
+            if (i) recover(s);        /* put the good copy back under the name */
             return GKE_OK;
         }
+        /* A damaged header can ask Argon2id for more memory than there is:
+         * that copy fails with NOMEM, and the next copy is still tried */
         if (r == GKE_BADPASS) bad_pass = 1;
-        else if (r == GKE_NOMEM || r == GKE_CRYPTO) return r;
+        else if ((r == GKE_NOMEM || r == GKE_CRYPTO) && !other) other = r;
     }
     if (!any) return GKE_NOSTORE;
-    return bad_pass ? GKE_BADPASS : GKE_DAMAGED;
+    if (bad_pass) return GKE_BADPASS;
+    return other ? other : GKE_DAMAGED;
 }
 
 static void wipe(gk_store *s)

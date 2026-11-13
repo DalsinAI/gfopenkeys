@@ -70,6 +70,7 @@ size_t gk_count(gk_store *s);
 int gk_opened_from(gk_store *s);
 uint64_t gk_generation(gk_store *s);  /* the write counter: one more each save */
 
+/* The secret is copied into buf: cleansing that copy is the caller's job */
 int gk_find(gk_store *s, const char *service, const char *host, const char *user, uint8_t *buf, size_t *len);
 int gk_put(gk_store *s, const char *service, const char *host, const char *user,
            const uint8_t *secret, size_t secret_len, const char *label, const char *owner, unsigned long flags);
