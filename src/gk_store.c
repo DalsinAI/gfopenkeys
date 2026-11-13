@@ -52,7 +52,10 @@ struct gk_store {
     uint64_t last_use;
     uint64_t gen;              /* the write counter of what is open (also in head) */
     int from;                  /* which copy the last unlock opened: 0 the store, 1 .new, 2 .bak */
+    int dirty;                 /* last-used times changed by finds, not yet written */
 };
+
+static void wipe(gk_store *s);
 
 static const char *const BODY_INFO = "gfopenkeys body v1";
 
@@ -360,6 +363,7 @@ static int file_save(gk_store *s)
         if (s->env.remove(s->env.u, s->path_bak) || s->env.rename(s->env.u, s->path, s->path_bak)) return GKE_IO;
     }
     if (s->env.rename(s->env.u, s->path_new, s->path)) return GKE_IO;
+    s->dirty = 0;
     return GKE_OK;
 }
 
@@ -431,10 +435,10 @@ int gk_create(gk_store *s, const char *pass, size_t pass_len, const gk_kdf *kdf)
     int r;
     if (gk_exists(s)) return GKE_EXISTS;
     if (!pass_len) return GKE_BADPASS;
-    gk_lock(s);
+    wipe(s);
     if (s->env.random(s->env.u, s->dkey, KEY)) return GKE_CRYPTO;
     s->gen = 0; s->from = 0;
-    if ((r = new_head(s, kdf, pass, pass_len)) || (r = file_save(s))) { gk_lock(s); return r; }
+    if ((r = new_head(s, kdf, pass, pass_len)) || (r = file_save(s))) { wipe(s); return r; }
     s->unlocked = 1;
     touch(s);
     return GKE_OK;
@@ -467,12 +471,22 @@ int gk_unlock(gk_store *s, const char *pass, size_t pass_len)
     return bad_pass ? GKE_BADPASS : GKE_DAMAGED;
 }
 
-void gk_lock(gk_store *s)
+static void wipe(gk_store *s)
 {
     entries_free(s);
     oc_cleanse(s->dkey, KEY);
     oc_cleanse(s->head, sizeof s->head);
     s->unlocked = 0;
+    s->dirty = 0;
+}
+
+/* Finds only change last-used times in memory; they are written here, once,
+ * rather than as a re-seal and two renames on every lookup. A failed write
+ * loses only those times. */
+void gk_lock(gk_store *s)
+{
+    if (s->unlocked && s->dirty) file_save(s);
+    wipe(s);
 }
 
 int gk_is_unlocked(gk_store *s)
@@ -508,7 +522,8 @@ int gk_find(gk_store *s, const char *service, const char *host, const char *user
     if (*len < s->e[i].secret_len) { *len = s->e[i].secret_len; return GKE_SHORT; }
     if (s->e[i].secret_len) memcpy(buf, s->e[i].secret, s->e[i].secret_len);
     *len = s->e[i].secret_len;
-    s->e[i].last_used = s->env.now(s->env.u);   /* kept in memory; written with the next change */
+    s->e[i].last_used = s->env.now(s->env.u);   /* kept in memory; written with the next change or at lock */
+    s->dirty = 1;
     return GKE_OK;
 }
 
@@ -555,7 +570,7 @@ static void reload(gk_store *s)
     size_t n;
     int r = GKE_IO;
     if (s->env.read(s->env.u, s->path, &p, &n) == GKE_OK) { r = file_open(s, p, n, NULL, 0, 1); free(p); }
-    if (r) gk_lock(s);
+    if (r) wipe(s);
 }
 
 /* Save, or on failure go back to what the file holds */

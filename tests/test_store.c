@@ -481,6 +481,44 @@ static void test_counter_nonce(void)
     fs_free(&x);
 }
 
+static uint64_t seen_last_used;
+static int grab_last_used(void *ctx, const gk_info *in) { (void)ctx; seen_last_used = in->last_used; return 0; }
+
+/* A find never writes the store; its last-used time is written once, at lock */
+static void test_last_used(void)
+{
+    fs x; gk_env e; gk_store *s;
+    uint8_t b[8];
+    size_t n;
+    int i;
+    fs_init(&x, &e);
+    gk_open(&s, &e, PATH);
+    gk_create(s, PASS, strlen(PASS), &KDF);
+    gk_put(s, "ssh", "h", "u", (const uint8_t *)"pw", 2, NULL, NULL, 0);
+    x.crash_at = 1000000; x.ops = 0;           /* count writes, renames and removes */
+    for (i = 0; i < 5; i++) { x.clock += 10; n = sizeof b; CHECK(gk_find(s, "ssh", "h", "u", b, &n) == GKE_OK); }
+    CHECK(x.ops == 0);
+    gk_lock(s);
+    CHECK(x.ops > 0);                          /* one save */
+    x.ops = 0;
+    CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_OK);
+    gk_list(s, NULL, grab_last_used, NULL);
+    CHECK(seen_last_used == 1050);
+    gk_lock(s);
+    CHECK(x.ops == 0);                         /* nothing found, nothing written */
+    /* and the timeout's lock writes them too */
+    gk_unlock(s, PASS, strlen(PASS));
+    gk_set_timeout(s, 60);
+    x.clock += 5; n = sizeof b; gk_find(s, "ssh", "h", "u", b, &n);
+    x.clock += 60;
+    CHECK(!gk_is_unlocked(s));
+    gk_unlock(s, PASS, strlen(PASS));
+    gk_list(s, NULL, grab_last_used, NULL);
+    CHECK(seen_last_used == 1055);
+    gk_close(s);
+    fs_free(&x);
+}
+
 int main(void)
 {
     test_aead();
@@ -494,6 +532,7 @@ int main(void)
     test_import();
     test_change_pass();
     test_counter_nonce();
+    test_last_used();
     printf("%d/%d checks passed\n", checks - fails, checks);
     return fails != 0;
 }
