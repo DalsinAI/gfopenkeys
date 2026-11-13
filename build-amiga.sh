@@ -38,6 +38,8 @@ fi
 
 "$CC" $CFLAGS -noixemul -I"$OUT/include" -o "$OUT/tests/GFOpenKeysTry" "$HERE/tests/amiga_try.c"
 echo "$OUT/tests/GFOpenKeysTry"
+"$CC" $CFLAGS -noixemul -I"$OUT/include" -o "$OUT/tests/GFOpenKeysLoaded" "$HERE/tests/amiga_loaded.c"
+echo "$OUT/tests/GFOpenKeysLoaded"
 
 # The prefs editor: a program, so it links the stubs as any program does
 # (gk_store.c is in it only for the name escape and check gk_prefs.c uses)
