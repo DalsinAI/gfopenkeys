@@ -42,6 +42,18 @@ struct IntuitionBase *IntuitionBase;
 struct Library *GadToolsBase, *UtilityBase;
 extern struct Library *OpenCryptoBase, *OpenTLSBase;   /* defined by libgfopencrypto.a and libgfopentls.a */
 
+/* The link stubs open their library from an ADD2INIT list, through
+ * gfopen_stub_open, which ends the program (exit()) when it fails. A library
+ * has no startup code, so those lists never run and there is no exit():
+ * this one stands in for the stubs' stub_open.o, so that member isn't
+ * linked. lib_init opens both bases itself. Never called. */
+struct Library *gfopen_stub_open(const char *name, ULONG version, UWORD revision);
+struct Library *gfopen_stub_open(const char *name, ULONG version, UWORD revision)
+{
+    (void)name; (void)version; (void)revision;
+    return NULL;
+}
+
 static struct SignalSemaphore sem;
 static gk_lib *keys;
 static struct Window *parent;            /* the window the next requester opens over */
@@ -146,7 +158,8 @@ static struct Library *lib_init(REG(d0, struct GFOpenKeysBase *base), REG(a0, BP
     OpenCryptoBase = OpenLibrary((CONST_STRPTR)"gfopencrypto.library", 2);
     OpenTLSBase = OpenLibrary((CONST_STRPTR)"gfopentls.library", 1);
     if (!DOSBase || !IntuitionBase || !GadToolsBase || !UtilityBase || !OpenCryptoBase || !OpenTLSBase
-        || OpenCryptoBase->lib_Revision < 4 || OpenTLSBase->lib_Revision < 5)
+        || (OpenCryptoBase->lib_Version == 2 && OpenCryptoBase->lib_Revision < 4)
+        || (OpenTLSBase->lib_Version == 1 && OpenTLSBase->lib_Revision < 5))
         goto fail;
     /* DESIGN.md section 4: 64 MiB and t = 3 where there is room (AC090, native), else 8 MiB and t = 2 */
     if (AvailMem(MEMF_ANY | MEMF_LARGEST) > 512UL * 1024 * 1024) { kdf.passes = 3; kdf.m_kib = 65536; }

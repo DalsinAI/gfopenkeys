@@ -31,7 +31,7 @@ int main(int argc, char **argv)
         printf("can't open %s %d\n", GFOPENKEYS_NAME, GFOPENKEYS_VERSION);
         return 20;
     }
-    printf("gfopenkeys.library %lu.%lu\n", GK_Version() >> 16, GK_Version() & 0xffff);
+    printf("gfopenkeys.library %lu.%lu\n", (unsigned long)(GK_Version() >> 16), (unsigned long)(GK_Version() & 0xffff));
     if (!strcmp(cmd, "NOPROMPT")) {
         UBYTE buf[64];
         ULONG len = sizeof buf;
@@ -44,7 +44,7 @@ int main(int argc, char **argv)
         ULONG len = sizeof buf;
         LONG r = GK_Find((CONST_STRPTR)SVC, (CONST_STRPTR)HOST, (CONST_STRPTR)USER, buf, &len, 0);
         say("find", r);
-        if (!r) printf("length %lu, %s\n", len, len == strlen(SECRET) && !memcmp(buf, SECRET, len) ? "matches" : "DIFFERS");
+        if (!r) printf("length %lu, %s\n", (unsigned long)len, len == strlen(SECRET) && !memcmp(buf, SECRET, len) ? "matches" : "DIFFERS");
         memset(buf, 0, sizeof buf);
     } else if (!strcmp(cmd, "DELETE")) {
         say("delete", GK_Delete((CONST_STRPTR)SVC, (CONST_STRPTR)HOST, (CONST_STRPTR)USER, 0));
@@ -59,7 +59,7 @@ int main(int argc, char **argv)
     if (!GK_Status(&st))
         printf("exists %ld unlocked %ld readonly %ld rolled-back %ld from %ld count %lu left %lu counter %lu\n",
                (long)st.gs_Exists, (long)st.gs_Unlocked, (long)st.gs_ReadOnly, (long)st.gs_RolledBack,
-               (long)st.gs_OpenedFrom, st.gs_Count, st.gs_SecondsLeft, st.gs_CounterLo);
+               (long)st.gs_OpenedFrom, (unsigned long)st.gs_Count, (unsigned long)st.gs_SecondsLeft, (unsigned long)st.gs_CounterLo);
     CloseLibrary(GFOpenKeysBase);
     return 0;
 }
