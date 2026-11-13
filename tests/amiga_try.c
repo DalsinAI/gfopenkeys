@@ -28,7 +28,8 @@ int main(int argc, char **argv)
     const char *cmd = argc > 1 ? argv[1] : "STATUS";
     struct GKStatus st;
     if (!(GFOpenKeysBase = OpenLibrary((CONST_STRPTR)GFOPENKEYS_NAME, GFOPENKEYS_VERSION))) {
-        printf("can't open %s %d\n", GFOPENKEYS_NAME, GFOPENKEYS_VERSION);
+        printf("can't open %s %d: it needs gfopencrypto.library 2.4 and gfopentls.library 1.5 or newer in LIBS:\n",
+               GFOPENKEYS_NAME, GFOPENKEYS_VERSION);
         return 20;
     }
     printf("gfopenkeys.library %lu.%lu\n", (unsigned long)(GK_Version() >> 16), (unsigned long)(GK_Version() & 0xffff));
