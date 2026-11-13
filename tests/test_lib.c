@@ -14,7 +14,7 @@ typedef struct ui_log {
     int next, asked, confirms;
     unsigned last_tries;
     char last_owner[80];
-    int warned[4];
+    int warned[5];
     uint32_t waited[16];
     int waits;
 } ui_log;
@@ -242,6 +242,30 @@ static void test_change_pass(void)
     fs_free(&x);
 }
 
+static void test_no_count_and_no_store(void)
+{
+    fs x; gk_env e; gk_ui ui; ui_log g; gk_lib *l;
+    fs_init(&x, &e); ui_init(&ui, &g);
+    gkl_open(&l, &e, &ui, PATH, &KDF);
+    CHECK(gkl_change_pass(l, "T", NULL, 0) == GKE_NOSTORE && g.asked == 0);   /* no store made by a change */
+    g.answers[0] = "pass";
+    gkl_store_entry(l, "T", "ssh", "h", "u", (const uint8_t *)"pw", 2, NULL, 0);
+    gkl_lock(l);
+    memset(&g, 0, sizeof g); g.answers[0] = "pass";
+    CHECK(gkl_unlock(l, "T", 0) == GKE_OK && g.warned[GKW_NO_COUNT] == 0);
+    gkl_lock(l);
+    m_remove(&x, PATH ".count");                         /* deleted: said, then written again */
+    memset(&g, 0, sizeof g); g.answers[0] = "pass";
+    CHECK(gkl_unlock(l, "T", 0) == GKE_OK && g.warned[GKW_NO_COUNT] == 1);
+    CHECK(fs_get(&x, PATH ".count") != NULL);
+    gkl_lock(l);
+    m_write(&x, PATH ".count", (const uint8_t *)"zz", 2);  /* garbled */
+    memset(&g, 0, sizeof g); g.answers[0] = "pass";
+    CHECK(gkl_unlock(l, "T", 0) == GKE_OK && g.warned[GKW_NO_COUNT] == 1);
+    gkl_close(l);
+    fs_free(&x);
+}
+
 int main(void)
 {
     test_owner();
@@ -251,6 +275,7 @@ int main(void)
     test_rollback();
     test_older_copy();
     test_change_pass();
+    test_no_count_and_no_store();
     printf("%d/%d library checks passed\n", checks - fails, checks);
     return fails != 0;
 }

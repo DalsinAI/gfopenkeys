@@ -48,7 +48,7 @@ gfopenputty moves first. The survey of today's secrets is in [docs/SURVEY-202611
   - A cancelled prompt returns `GKE_CANCEL`.
   - After 5 wrong passphrases, the prompt waits 2, 4, 8 seconds and so on. The prompt is the library's own.
 - **Lengths.** Secrets are at most 4096 bytes, so a private-key blob fits later. Each name part is at most 255 bytes, and a label at most 127.
-- **Concurrency.** The library is reentrant, with one semaphore round the store. Programs on other Amigas (ARexxNet) never see it.
+- **Concurrency.** The library is reentrant, with one semaphore round the store. Programs on other Amigas (ARexxNet) never see it. While the passphrase requester is open it holds the semaphore, so another program's call (even with `GKF_NOPROMPT`) waits until the user answers. That is on purpose: one unlock serves everyone, and no call sees a half-unlocked store.
 - **Owner tag.** Each entry records the owning program's name (`FindTask(0)->tc_Node.ln_Name` at store time) for the prefs. It is a label, not access control: on AmigaOS any program can call the library. The name can be NULL or a string that is about to go, so the library copies it under `Forbid()`, at most 63 bytes, and uses "(unnamed)" for NULL. Any program can set its own name, so the unlock requester says "a program calling itself ...".
 
 ## 3. Naming: `service/host/user`
