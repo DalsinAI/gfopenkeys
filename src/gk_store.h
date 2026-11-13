@@ -69,6 +69,11 @@ size_t gk_count(gk_store *s);
  * last change may be lost, or that an older copy was put back (DESIGN.md 4). */
 int gk_opened_from(gk_store *s);
 uint64_t gk_generation(gk_store *s);  /* the write counter: one more each save */
+/* 1 after an older passphrase opened .bak while the store file is under a
+ * newer one: every write answers GKE_READONLY, and lock writes nothing */
+int gk_is_readonly(gk_store *s);
+/* 0 when pass opens the store as it is now, GKE_BADPASS when not */
+int gk_check_pass(gk_store *s, const char *pass, size_t pass_len);
 
 /* The secret is copied into buf: cleansing that copy is the caller's job */
 int gk_find(gk_store *s, const char *service, const char *host, const char *user, uint8_t *buf, size_t *len);

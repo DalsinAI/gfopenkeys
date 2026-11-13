@@ -53,6 +53,7 @@ struct gk_store {
     uint64_t gen;              /* the write counter of what is open (also in head) */
     int from;                  /* which copy the last unlock opened: 0 the store, 1 .new, 2 .bak */
     int dirty;                 /* last-used times changed by finds, not yet written */
+    int readonly;              /* opened .bak with an older passphrase than the store's: no writes */
 };
 
 static void wipe(gk_store *s);
@@ -489,6 +490,10 @@ int gk_unlock(gk_store *s, const char *pass, size_t pass_len)
              * second save failed): that file is newer, so it stays where it
              * is and the caller warns (gk_opened_from) */
             if (i && !store_bad_pass) recover(s);
+            /* Saving now would put the older copy over the newer store and
+             * quietly undo a passphrase change: read-only until the newer
+             * passphrase is used (Franklin, #2) */
+            if (i && store_bad_pass) s->readonly = 1;
             return GKE_OK;
         }
         if (i == 0 && r == GKE_BADPASS) store_bad_pass = 1;
@@ -509,6 +514,7 @@ static void wipe(gk_store *s)
     oc_cleanse(s->head, sizeof s->head);
     s->unlocked = 0;
     s->dirty = 0;
+    s->readonly = 0;
 }
 
 /* Finds only change last-used times in memory; they are written here, once,
@@ -516,7 +522,7 @@ static void wipe(gk_store *s)
  * loses only those times. */
 void gk_lock(gk_store *s)
 {
-    if (s->unlocked && s->dirty) file_save(s);
+    if (s->unlocked && s->dirty && !s->readonly) file_save(s);
     wipe(s);
 }
 
@@ -617,6 +623,7 @@ int gk_put(gk_store *s, const char *service, const char *host, const char *user,
 {
     int r;
     if (!gk_is_unlocked(s)) return GKE_LOCKED;
+    if (s->readonly) return GKE_READONLY;
     touch(s);
     if ((r = put_one(s, service, host, user, secret, secret_len, label, owner, flags))) return r;
     return commit(s);
@@ -627,6 +634,7 @@ int gk_delete(gk_store *s, const char *service, const char *host, const char *us
     char *h;
     long i;
     if (!gk_is_unlocked(s)) return GKE_LOCKED;
+    if (s->readonly) return GKE_READONLY;
     if (gk_check_name(service, host, user)) return GKE_BADNAME;
     if (!(h = host_key(host))) return GKE_NOMEM;
     i = find_at(s, service, h, user);
@@ -660,6 +668,7 @@ int gk_import(gk_store *s, const gk_import_item *list, size_t count, const char 
     int r;
     *added = 0;
     if (!gk_is_unlocked(s)) return GKE_LOCKED;
+    if (s->readonly) return GKE_READONLY;
     touch(s);
     for (i = 0; i < count; i++) {          /* every name checked before anything changes */
         if (gk_check_name(list[i].service, list[i].host, list[i].user)) return GKE_BADNAME;
@@ -683,6 +692,7 @@ int gk_change_pass(gk_store *s, const char *pass, size_t pass_len, const gk_kdf 
     uint8_t keep[HEAD_BODY];
     int r;
     if (!gk_is_unlocked(s)) return GKE_LOCKED;
+    if (s->readonly) return GKE_READONLY;
     if (!pass_len) return GKE_BADPASS;
     touch(s);
     memcpy(keep, s->head, HEAD_BODY);
@@ -695,3 +705,21 @@ int gk_change_pass(gk_store *s, const char *pass, size_t pass_len, const gk_kdf 
 
 uint64_t gk_generation(gk_store *s) { return gk_is_unlocked(s) ? s->gen : 0; }
 int gk_opened_from(gk_store *s) { return gk_is_unlocked(s) ? s->from : -1; }
+
+int gk_is_readonly(gk_store *s) { return gk_is_unlocked(s) && s->readonly; }
+
+/* Does pass open the store as it is now? (GK_ChangePassphrase asks for the
+ * current one first, so a program can't lock the user out while unlocked.) */
+int gk_check_pass(gk_store *s, const char *pass, size_t pass_len)
+{
+    uint8_t mk[KEY], dk[KEY];
+    int r;
+    if (!gk_is_unlocked(s)) return GKE_LOCKED;
+    if ((r = master_key(s, mk, s->head, pass, pass_len))) return r;
+    r = gk_unseal(dk, s->head + HEAD_WRAP + 8, KEY, s->head + HEAD_WRAP + 8 + KEY, s->head, HEAD_WRAP, mk, s->head + HEAD_WRAP);
+    oc_cleanse(mk, KEY);
+    if (!r) r = oc_ct_equal(dk, s->dkey, KEY) ? GKE_OK : GKE_BADPASS;
+    else r = GKE_BADPASS;
+    oc_cleanse(dk, KEY);
+    return r;
+}
