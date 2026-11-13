@@ -66,7 +66,7 @@ uint32_t gk_seconds_left(gk_store *s);   /* 0 when locked; UINT32_MAX with no ti
 size_t gk_count(gk_store *s);
 /* Which copy the last unlock opened: 0 the store, 1 ".new", 2 ".bak" (-1 locked).
  * 2 means the store was damaged or missing: the caller warns the user that the
- * last change may be lost, or that an older copy was put back (DESIGN.md 5). */
+ * last change may be lost, or that an older copy was put back (DESIGN.md 4). */
 int gk_opened_from(gk_store *s);
 uint64_t gk_generation(gk_store *s);  /* the write counter: one more each save */
 

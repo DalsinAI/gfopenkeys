@@ -5,14 +5,15 @@
  *   type passes m_kib lanes (4 x 32 bits)    Argon2id's settings (type 2)
  *   salt[16]                                 Argon2id's salt
  *   nonce[8] key[32] tag[16]                 the data key, sealed under the master key
+ *   count (64 bits)                          the write counter: one more each save
  *   salt[32] length(32 bits) body[length] tag[16]
  * The master key is Argon2id(passphrase); it only opens the data key. The
  * body is sealed under HKDF-SHA256(data key, the body's salt), a new salt
- * each write, so its zero nonce is never reused. The data key's seal covers
- * the 40 bytes before it, the body's seal the 96 bytes before the body salt.
+ * each write, with the write counter as its nonce: a repeated salt still
+ * can't repeat a nonce. The data key's seal covers the 40 bytes before it,
+ * the body's seal the 104 bytes before the body salt (the counter included).
  *
- * The body, once opened: "GKB1", the write counter (64 bits, one more each
- * save, so an older copy put back in place can be told), count, then each entry: service, host,
+ * The body, once opened: "GKB1", count, then each entry: service, host,
  * user, label, owner (16-bit length + bytes each), created, last used (64
  * bits each), the secret (16-bit length + bytes).
  *
@@ -26,7 +27,8 @@
 
 #define HEAD_KDF   8
 #define HEAD_WRAP  40          /* the data key's seal covers bytes 0..39 */
-#define HEAD_BODY  96          /* the body's seal covers bytes 0..95 */
+#define HEAD_COUNT 96          /* the write counter */
+#define HEAD_BODY  104         /* the body's seal covers bytes 0..103 */
 #define BODY_SALT  32
 #define TAG        16
 #define KEY        32
@@ -42,13 +44,13 @@ struct gk_store {
     gk_env env;
     char *path, *path_new, *path_bak;
     int unlocked;
-    uint8_t head[HEAD_BODY];   /* the file's header while unlocked (kdf and the sealed data key) */
+    uint8_t head[HEAD_BODY];   /* the file's header while unlocked (kdf, the sealed data key, the counter) */
     uint8_t dkey[KEY];
     entry *e;
     size_t n, cap;
     uint32_t timeout;
     uint64_t last_use;
-    uint64_t gen;              /* the write counter of what is open */
+    uint64_t gen;              /* the write counter of what is open (also in head) */
     int from;                  /* which copy the last unlock opened: 0 the store, 1 .new, 2 .bak */
 };
 
@@ -213,7 +215,6 @@ static int body_encode(gk_store *s, buf *b)
     size_t i;
     uint8_t c[4];
     put(b, "GKB1", 4);
-    put64(b, s->gen);
     be32(c, (uint32_t)s->n); put(b, c, 4);
     for (i = 0; i < s->n; i++) {
         const entry *x = &s->e[i];
@@ -229,12 +230,9 @@ static int body_encode(gk_store *s, buf *b)
 static int body_decode(gk_store *s, const uint8_t *p, size_t n)
 {
     rd r = { p, n, 0, 0 };
-    const uint8_t *m = take(&r, 4), *c;
-    uint64_t gen = take64(&r);
+    const uint8_t *m = take(&r, 4), *c = take(&r, 4);
     uint32_t count, i;
-    c = take(&r, 4);
     if (!m || !c || memcmp(m, "GKB1", 4)) return GKE_DAMAGED;
-    s->gen = gen;
     count = rd32(c);
     if (count > GK_MAX_ENTRIES) return GKE_DAMAGED;
     if (count && !(s->e = calloc(count, sizeof *s->e))) return GKE_NOMEM;
@@ -288,14 +286,15 @@ static int body_key(uint8_t bk[KEY], const uint8_t dkey[KEY], const uint8_t salt
 static int file_make(gk_store *s, uint8_t **out, size_t *len)
 {
     buf body = { 0 }, f = { 0 };
-    uint8_t salt[BODY_SALT], bk[KEY], tag[TAG], l[4], zero[8] = { 0 };
+    uint8_t salt[BODY_SALT], bk[KEY], tag[TAG], l[4];
     uint8_t *ct;
     int r;
+    be32(s->head + HEAD_COUNT, (uint32_t)(s->gen >> 32)); be32(s->head + HEAD_COUNT + 4, (uint32_t)s->gen);
     if ((r = body_encode(s, &body))) { buf_wipe(&body); return r; }
     if (s->env.random(s->env.u, salt, sizeof salt)) { buf_wipe(&body); return GKE_CRYPTO; }
     if ((r = body_key(bk, s->dkey, salt))) { buf_wipe(&body); return r; }
     if (!(ct = malloc(body.n ? body.n : 1))) { buf_wipe(&body); oc_cleanse(bk, KEY); return GKE_NOMEM; }
-    gk_seal(ct, tag, body.p, body.n, s->head, HEAD_BODY, bk, zero);
+    gk_seal(ct, tag, body.p, body.n, s->head, HEAD_BODY, bk, s->head + HEAD_COUNT);   /* the counter is the nonce */
     oc_cleanse(bk, KEY);
     put(&f, s->head, HEAD_BODY); put(&f, salt, BODY_SALT);
     be32(l, (uint32_t)body.n); put(&f, l, 4);
@@ -311,7 +310,7 @@ static int file_make(gk_store *s, uint8_t **out, size_t *len)
  * On success with pass: s->head and s->dkey set. Entries decoded into s when decode. */
 static int file_open(gk_store *s, const uint8_t *p, size_t n, const char *pass, size_t pass_len, int decode)
 {
-    uint8_t mk[KEY], dk[KEY], bk[KEY], zero[8] = { 0 };
+    uint8_t mk[KEY], dk[KEY], bk[KEY];
     uint32_t blen;
     uint8_t *pt;
     int r;
@@ -328,11 +327,12 @@ static int file_open(gk_store *s, const uint8_t *p, size_t n, const char *pass, 
     }
     if ((r = body_key(bk, dk, p + HEAD_BODY))) { oc_cleanse(dk, KEY); return r; }
     if (!(pt = malloc(blen ? blen : 1))) { oc_cleanse(dk, KEY); oc_cleanse(bk, KEY); return GKE_NOMEM; }
-    r = gk_unseal(pt, p + HEAD_BODY + BODY_SALT + 4, blen, p + n - TAG, p, HEAD_BODY, bk, zero);
+    r = gk_unseal(pt, p + HEAD_BODY + BODY_SALT + 4, blen, p + n - TAG, p, HEAD_BODY, bk, p + HEAD_COUNT);
     oc_cleanse(bk, KEY);
     if (!r && decode) {
         entries_free(s);
         r = body_decode(s, pt, blen);
+        if (!r) s->gen = (uint64_t)rd32(p + HEAD_COUNT) << 32 | rd32(p + HEAD_COUNT + 4);
     }
     oc_cleanse(pt, blen); free(pt);
     if (!r && pass) { memcpy(s->head, p, HEAD_BODY); memcpy(s->dkey, dk, KEY); }
@@ -413,6 +413,7 @@ static int new_head(gk_store *s, const gk_kdf *kdf, const char *pass, size_t pas
     uint8_t h[HEAD_BODY], mk[KEY], nonce[8];
     int r;
     if (!kdf) return GKE_CRYPTO;
+    memset(h, 0, sizeof h);           /* the counter is written by each save */
     memcpy(h, "GFKS\x01\0\0\0", 8);
     be32(h + HEAD_KDF, OC_ARGON2ID); be32(h + HEAD_KDF + 4, kdf->passes);
     be32(h + HEAD_KDF + 8, kdf->m_kib); be32(h + HEAD_KDF + 12, kdf->lanes);

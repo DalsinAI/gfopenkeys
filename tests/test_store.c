@@ -444,6 +444,43 @@ static void test_change_pass(void)
     fs_free(&x);
 }
 
+/* The random source stuck on one value: every body salt is the same, but the
+ * write counter is the nonce, so two saves never share key and nonce. */
+static uint32_t stuck_rng;
+static int m_random_stuck(void *u, uint8_t *out, size_t len) { (void)u; memset(out, (int)stuck_rng, len); return 0; }
+
+static void test_counter_nonce(void)
+{
+    fs x; gk_env e; gk_store *s;
+    uint8_t a[512], b[512];
+    size_t la, lb;
+    mfile *m;
+    fs_init(&x, &e);
+    e.random = m_random_stuck;
+    gk_open(&s, &e, PATH);
+    CHECK(gk_create(s, PASS, strlen(PASS), &KDF) == GKE_OK);
+    CHECK(gk_put(s, "ssh", "h", "u", (const uint8_t *)"AAAA", 4, NULL, NULL, 0) == GKE_OK);
+    m = fs_get(&x, PATH); la = m->len; CHECK(la <= sizeof a); memcpy(a, m->data, la);
+    CHECK(gk_put(s, "ssh", "h", "u", (const uint8_t *)"BBBB", 4, NULL, NULL, GKF_REPLACE) == GKE_OK);
+    m = fs_get(&x, PATH); lb = m->len; CHECK(lb <= sizeof b); memcpy(b, m->data, lb);
+    CHECK(la == lb && !memcmp(a + 104, b + 104, 32));       /* the same salt both times */
+    CHECK(memcmp(a + 96, b + 96, 8));                       /* but a new counter (the nonce) */
+    {   /* XOR of the two bodies is not the XOR of the two plaintexts */
+        size_t i, off = 104 + 32 + 4, same = 1;
+        for (i = 0; i < la - 16 - off; i++) if (a[off + i] != b[off + i]) same = 0;
+        CHECK(!same);
+        /* the entry's secret is at the body's end: 'A'^'B' == 3 must not show there */
+        for (i = 0, same = 1; i < 4; i++) if ((a[la - 20 + i] ^ b[la - 20 + i]) != 3) same = 0;
+        CHECK(!same);
+    }
+    m->data[100] ^= 1;                                      /* the counter is in the AD */
+    gk_lock(s);
+    m_remove(&x, PATH ".bak");
+    CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_DAMAGED);
+    gk_close(s);
+    fs_free(&x);
+}
+
 int main(void)
 {
     test_aead();
@@ -456,6 +493,7 @@ int main(void)
     test_timeout();
     test_import();
     test_change_pass();
+    test_counter_nonce();
     printf("%d/%d checks passed\n", checks - fails, checks);
     return fails != 0;
 }
