@@ -31,7 +31,7 @@ CALL want 'TIMEOUT', 10
 CALL want 'TIMEOUT 1x', 10
 CALL want 'TIMEOUT 900', 0
 
-CALL want 'DEACTIVATE', 0
+CALL want 'DEACTIVATE', 5                   /* no icon to go to */
 CALL want 'ACTIVATE', 0
 CALL want 'QUIT', 0
 
