@@ -344,13 +344,17 @@ static LONG GK_Status(REG(a0, struct GKStatus *st), B)
     return GKE_OK;
 }
 
+/* Kept in "<store>.timeout" for the next boot; from a plain task (no DOS)
+ * it is set for now only and answers GKE_IO */
 static LONG GK_SetTimeout(REG(d0, ULONG seconds), B)
 {
+    LONG r;
     (void)base;
     ObtainSemaphore(&sem);
-    gk_set_timeout(gkl_store(keys), seconds);
+    if (is_process()) r = gkl_set_timeout(keys, seconds);
+    else { gk_set_timeout(gkl_store(keys), seconds); r = GKE_IO; }
     ReleaseSemaphore(&sem);
-    return GKE_OK;
+    return r;
 }
 
 static LONG GK_ChangePassphrase(REG(a0, struct Window *win), REG(d0, ULONG flags), B)

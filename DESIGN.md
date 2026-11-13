@@ -37,7 +37,7 @@ gfopenputty moves first. The survey of today's secrets is in [docs/SURVEY-202611
 | `LONG GK_List(struct Hook *hook, CONST_STRPTR service, ULONG flags)` | Calls the hook once for each entry (a `struct GKEntryInfo`: service, host, user, label, the owning program, created, last used). It never passes the secret. It needs the store unlocked |
 | `LONG GK_Unlock(struct Window *parent, ULONG flags)` / `void GK_Lock(void)` | Asks for the passphrase through a GFOpenLayout requester on `parent`'s screen; locking wipes the data key |
 | `LONG GK_Status(struct GKStatus *st)` | Exists, locked or unlocked, entry count and seconds left before it locks. Nothing secret |
-| `LONG GK_SetTimeout(ULONG seconds)` | 0 means stay unlocked until reboot. The default is 900 (15 minutes) after the last use |
+| `LONG GK_SetTimeout(ULONG seconds)` | 0 means never lock by itself (until Lock or a reboot). Kept across reboots. The default is 900 (15 minutes) after the last use |
 | `LONG GK_ChangePassphrase(struct Window *parent)` | Asks for the current passphrase first (an unlocked store is not enough, or any program could lock the user out), then re-wraps the data key under a new passphrase; the entries aren't re-sealed (section 4) |
 | `LONG GK_Import(const struct GKImport *list, ULONG count, CONST_STRPTR from, ULONG flags)` | One write for an app's migration. Entries that already exist are skipped unless `GKF_REPLACE` is set. It returns how many were added, so the app clears its old store only after this succeeds |
 | `CONST_STRPTR GK_ErrorString(LONG err)` | The error's text |
@@ -118,7 +118,7 @@ The body's salt, the KDF salt, the wrap nonce and the data key all come from `OT
 ## 5. Unlocking and the timeout
 
 - **The first `GK_Find`/`GK_List` after boot** (or after locking) opens one requester: "Unlock your keys", with the passphrase and the owning program's name, so the user knows who is asking.
-- **One unlock serves every program** until the timeout. It is measured from the last use, 15 minutes by default, and set in the prefs.
+- **One unlock serves every program** until the timeout. It is measured from the last use, 15 minutes by default, and set in the prefs (or `GK_SetTimeout`, or ARexx `TIMEOUT`). The library keeps it beside the store in `<store>.timeout` (decimal seconds, not secret) and reads it when it starts, so it holds across reboots.
 - **What counts as use** (restarts the timer): unlocking, `GK_Find`, `GK_Store`, `GK_Delete`, `GK_Import` and `GK_ChangePassphrase`. `GK_Status` and `GK_List` do not, so a prefs window left open never keeps the store unlocked.
 - **Locking happens on**:
   - the timeout;

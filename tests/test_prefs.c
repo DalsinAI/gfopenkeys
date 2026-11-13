@@ -33,7 +33,7 @@ static int o_del(void *u, const char *service, const char *host, const char *use
 {
     return gkl_delete(u, "Keys", service, host, user, GKF_NOPROMPT);
 }
-static void o_timeout(void *u, uint32_t s) { gk_set_timeout(gkl_store(u), s); }
+static int o_timeout(void *u, uint32_t s) { return gkl_set_timeout(u, s); }
 static const char *o_err(void *u, int e)
 {
     (void)u;
@@ -165,6 +165,10 @@ static void test_rexx_timeout(void)
     CHECK(rx(&g, "TIMEOUT 1x") == GKP_RC_ERROR);
     CHECK(rx(&g, "TIMEOUT 4294967296") == GKP_RC_ERROR);
     CHECK(rx(&g, "TIMEOUT 4294967295") == GKP_RC_OK);
+    g.x.ops = 0; g.x.crash_at = 0;                     /* the .timeout file can't be written */
+    CHECK(rx(&g, "TIMEOUT 120") == GKP_RC_WARN);
+    g.x.crash_at = -1;
+    CHECK(rx(&g, "STATUS") == GKP_RC_OK && strstr(g.r, "left 120"));   /* set for now all the same */
     rig_close(&g);
 }
 

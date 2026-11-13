@@ -16,6 +16,7 @@ struct gk_lib {
     gk_ui ui;
     gk_kdf kdf;
     char *count_path;            /* "<store>.count": the highest write counter seen (not secret) */
+    char *timeout_path;          /* "<store>.timeout": the timeout in seconds, as decimal text */
     unsigned fails;              /* wrong passphrases in a row */
     int rolled_back;
 };
@@ -30,6 +31,34 @@ void gkl_owner(char out[GK_MAX_OWNER + 1], const char *raw)
     if (!o) strcpy(out, "(unnamed)");
 }
 
+/* ---- the timeout, kept across reboots ------------------------------------ */
+
+/* "<store>.timeout": 1 to 10 digits, a newline allowed after them. Anything
+ * else (or no file) leaves GK_DEFAULT_TIMEOUT. */
+static void load_timeout(gk_lib *l)
+{
+    uint8_t *p;
+    size_t n, i;
+    uint64_t v = 0;
+    if (l->env.read(l->env.u, l->timeout_path, &p, &n)) return;
+    if (n && p[n - 1] == '\n') n--;
+    for (i = 0; i < n && p[i] >= '0' && p[i] <= '9'; i++) v = v * 10 + (uint64_t)(p[i] - '0');
+    if (n && n <= 10 && i == n && v <= UINT32_MAX) gk_set_timeout(l->s, (uint32_t)v);
+    free(p);
+}
+
+int gkl_set_timeout(gk_lib *l, uint32_t seconds)
+{
+    uint8_t t[11], d[10];
+    size_t n = 0;
+    int i = 0;
+    gk_set_timeout(l->s, seconds);
+    do { d[i++] = (uint8_t)('0' + seconds % 10); seconds /= 10; } while (seconds);
+    while (i) t[n++] = d[--i];
+    t[n++] = '\n';
+    return l->env.write(l->env.u, l->timeout_path, t, n) ? GKE_IO : GKE_OK;
+}
+
 int gkl_open(gk_lib **out, const gk_env *env, const gk_ui *ui, const char *path, const gk_kdf *kdf)
 {
     gk_lib *l = calloc(1, sizeof *l);
@@ -38,9 +67,13 @@ int gkl_open(gk_lib **out, const gk_env *env, const gk_ui *ui, const char *path,
     *out = NULL;
     if (!l) return GKE_NOMEM;
     l->env = *env; l->ui = *ui; l->kdf = *kdf;
-    if (!(l->count_path = malloc(n + 7))) { free(l); return GKE_NOMEM; }
+    l->count_path = malloc(n + 7);
+    l->timeout_path = malloc(n + 9);
+    if (!l->count_path || !l->timeout_path) { free(l->count_path); free(l->timeout_path); free(l); return GKE_NOMEM; }
     memcpy(l->count_path, path, n); memcpy(l->count_path + n, ".count", 7);
-    if ((r = gk_open(&l->s, env, path))) { free(l->count_path); free(l); return r; }
+    memcpy(l->timeout_path, path, n); memcpy(l->timeout_path + n, ".timeout", 9);
+    if ((r = gk_open(&l->s, env, path))) { free(l->count_path); free(l->timeout_path); free(l); return r; }
+    load_timeout(l);
     *out = l;
     return GKE_OK;
 }
@@ -50,6 +83,7 @@ void gkl_close(gk_lib *l)
     if (!l) return;
     gk_close(l->s);
     free(l->count_path);
+    free(l->timeout_path);
     free(l);
 }
 

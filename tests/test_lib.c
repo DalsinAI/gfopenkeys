@@ -266,6 +266,70 @@ static void test_no_count_and_no_store(void)
     fs_free(&x);
 }
 
+/* the timeout is kept in "<store>.timeout" and read at the next open */
+static void test_timeout_kept(void)
+{
+    fs x; gk_env e; gk_ui ui; ui_log g; gk_lib *l;
+    gk_status st;
+    uint8_t *p; size_t n;
+    fs_init(&x, &e); ui_init(&ui, &g);
+    gkl_open(&l, &e, &ui, PATH, &KDF);
+    g.answers[0] = "pass";
+    gkl_store_entry(l, "T", "ssh", "h", "u", (const uint8_t *)"pw", 2, NULL, 0);
+    gkl_status(l, &st);
+    CHECK(st.seconds_left == GK_DEFAULT_TIMEOUT);              /* no file yet: the default */
+    CHECK(gkl_set_timeout(l, 60) == GKE_OK);
+    CHECK(m_read(&x, PATH ".timeout", &p, &n) == 0 && n == 3 && !memcmp(p, "60\n", 3));
+    free(p);
+    gkl_close(l);
+    /* the next boot */
+    memset(&g, 0, sizeof g); g.answers[0] = "pass";
+    gkl_open(&l, &e, &ui, PATH, &KDF);
+    CHECK(gkl_unlock(l, "T", 0) == GKE_OK);
+    gkl_status(l, &st);
+    CHECK(st.seconds_left == 60);
+    CHECK(gkl_set_timeout(l, 0) == GKE_OK);                    /* 0: never by itself, also kept */
+    gkl_close(l);
+    memset(&g, 0, sizeof g); g.answers[0] = "pass";
+    gkl_open(&l, &e, &ui, PATH, &KDF);
+    gkl_unlock(l, "T", 0);
+    gkl_status(l, &st);
+    CHECK(st.seconds_left == UINT32_MAX);
+    CHECK(gkl_set_timeout(l, 86400) == GKE_OK);
+    gkl_close(l);
+    memset(&g, 0, sizeof g); g.answers[0] = "pass";
+    gkl_open(&l, &e, &ui, PATH, &KDF);
+    gkl_unlock(l, "T", 0);
+    gkl_status(l, &st);
+    CHECK(st.seconds_left == 86400);
+    gkl_close(l);
+    /* a file that isn't a number leaves the default */
+    {
+        static const char *bad[] = { "", "\n", "abc", "60x", "-5", "4294967296", "12345678901", "6 0" };
+        size_t i;
+        for (i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            m_write(&x, PATH ".timeout", (const uint8_t *)bad[i], strlen(bad[i]));
+            memset(&g, 0, sizeof g); g.answers[0] = "pass";
+            gkl_open(&l, &e, &ui, PATH, &KDF);
+            gkl_unlock(l, "T", 0);
+            gkl_status(l, &st);
+            CHECK(st.seconds_left == GK_DEFAULT_TIMEOUT);
+            gkl_close(l);
+        }
+    }
+    /* a write that fails: set for now, GKE_IO */
+    memset(&g, 0, sizeof g); g.answers[0] = "pass";
+    gkl_open(&l, &e, &ui, PATH, &KDF);
+    gkl_unlock(l, "T", 0);
+    x.ops = 0; x.crash_at = 0;
+    CHECK(gkl_set_timeout(l, 30) == GKE_IO);
+    x.crash_at = -1;
+    gkl_status(l, &st);
+    CHECK(st.seconds_left == 30);
+    gkl_close(l);
+    fs_free(&x);
+}
+
 int main(void)
 {
     test_owner();
@@ -276,6 +340,7 @@ int main(void)
     test_older_copy();
     test_change_pass();
     test_no_count_and_no_store();
+    test_timeout_kept();
     printf("%d/%d library checks passed\n", checks - fails, checks);
     return fails != 0;
 }
