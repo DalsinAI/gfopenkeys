@@ -59,5 +59,8 @@ int gkl_import(gk_lib *l, const char *owner, const gk_import_item *list, size_t 
 /* Asks for the current passphrase first, then the new one twice */
 int gkl_change_pass(gk_lib *l, const char *owner, const gk_kdf *kdf, unsigned long flags);
 void gkl_status(gk_lib *l, gk_status *st);   /* not a use */
+/* Sets the timeout and keeps it in "<store>.timeout" for the next boot:
+ * 0, or GKE_IO when it couldn't be written (it is set for now either way) */
+int gkl_set_timeout(gk_lib *l, uint32_t seconds);
 
 #endif

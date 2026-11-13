@@ -229,8 +229,9 @@ static int cmd_timeout(const gkp_ops *ops, outbuf *o, const char *args)
     const char *a;
     size_t n = rest(args, &a);
     unsigned long long v;
+    int r;
     if (number(a, n, 0xFFFFFFFFull, &v)) return say(o, GKP_RC_ERROR, "TIMEOUT needs seconds, 0 or more");
-    ops->set_timeout(ops->u, (uint32_t)v);
+    if ((r = ops->set_timeout(ops->u, (uint32_t)v))) return fail(ops, o, GKP_RC_WARN, r);   /* set, but not kept */
     return GKP_RC_OK;
 }
 

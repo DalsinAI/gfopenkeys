@@ -118,7 +118,7 @@ The body's salt, the KDF salt, the wrap nonce and the data key all come from `OT
 ## 5. Unlocking and the timeout
 
 - **The first `GK_Find`/`GK_List` after boot** (or after locking) opens one requester: "Unlock your keys", with the passphrase and the owning program's name, so the user knows who is asking.
-- **One unlock serves every program** until the timeout. It is measured from the last use, 15 minutes by default, and set in the prefs.
+- **One unlock serves every program** until the timeout. It is measured from the last use, 15 minutes by default, and set in the prefs (or `GK_SetTimeout`, or ARexx `TIMEOUT`). The library keeps it beside the store in `<store>.timeout` (decimal seconds, not secret) and reads it when it starts, so it holds across reboots.
 - **What counts as use** (restarts the timer): unlocking, `GK_Find`, `GK_Store`, `GK_Delete`, `GK_Import` and `GK_ChangePassphrase`. `GK_Status` and `GK_List` do not, so a prefs window left open never keeps the store unlocked.
 - **Locking happens on**:
   - the timeout;

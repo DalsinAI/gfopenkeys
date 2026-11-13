@@ -81,7 +81,7 @@ static int op_del(void *u, const char *service, const char *host, const char *us
     return (int)GK_Delete((CONST_STRPTR)service, (CONST_STRPTR)host, (CONST_STRPTR)user, GKF_NOPROMPT);
 }
 
-static void op_timeout(void *u, uint32_t seconds) { (void)u; GK_SetTimeout(seconds); }
+static int op_timeout(void *u, uint32_t seconds) { (void)u; return (int)GK_SetTimeout(seconds); }
 static const char *op_err(void *u, int e) { (void)u; return (const char *)GK_ErrorString(e); }
 
 static const gkp_ops ops = { op_status, op_lock, op_list, op_del, op_timeout, op_err, NULL };
@@ -103,6 +103,7 @@ static struct List keys, elsewhere;
 static LONG chosen = -1;            /* the selected row of the keys list */
 static int quit, dirty = 1, was_unlocked = -1;
 static char state[120];
+static int held;                    /* an error is on the state line: keep it until the next press */
 
 static void free_rows(struct List *l)
 {
@@ -174,6 +175,8 @@ static void show_status(void)
 {
     gk_status st;
     op_status(NULL, &st);
+    if (st.unlocked != was_unlocked) { was_unlocked = st.unlocked; dirty = 1; }
+    if (held) return;
     if (!st.exists)
         set_state("No keys yet: a program makes them the first time it saves one");
     else if (!st.unlocked)
@@ -188,7 +191,6 @@ static void show_status(void)
                      (unsigned long)(st.seconds_left + 59) / 60, st.readonly ? " (read-only)" : "");
         set_state(t);
     }
-    if (st.unlocked != was_unlocked) { was_unlocked = st.unlocked; dirty = 1; }
 }
 
 static void refill(void)
@@ -211,7 +213,7 @@ static int ask(const char *title, const char *text, const char *buttons, const c
 
 static void report(LONG r)
 {
-    if (r && r != GKE_CANCEL) set_state((const char *)GK_ErrorString(r));
+    if (r && r != GKE_CANCEL) { set_state((const char *)GK_ErrorString(r)); held = 1; }
     else dirty = 1;
 }
 
@@ -220,7 +222,7 @@ static void delete_chosen(int whole_service)
     row *r = chosen >= 0 ? row_at(chosen) : NULL;
     char name[96];
     LONG first = 0, e;
-    if (!r) { set_state("Choose a key in the list first"); return; }
+    if (!r) { set_state("Choose a key in the list first"); held = 1; return; }
     if (whole_service) {
         struct Node *n, *next;
         if (!ask("Keys", "Delete every key of the service\n%s?", "Delete|Cancel", r->service)) return;
@@ -238,6 +240,24 @@ static void delete_chosen(int whole_service)
     e = GK_Delete((CONST_STRPTR)r->service, (CONST_STRPTR)r->host, (CONST_STRPTR)r->user, 0);
     report(first ? first : e);
     dirty = 1;                                    /* some may have gone even when one failed */
+}
+
+/* The timeout the library keeps (gk_lib's "<store>.timeout"), in minutes,
+ * for the gadget; the default when there is none */
+#define TIMEOUT_FILE "ENVARC:GFOpenKeys/Default.keys.timeout"
+static LONG saved_minutes(void)
+{
+    char t[16];
+    LONG n, i;
+    ULONG v = 0;
+    BPTR fh = Open((CONST_STRPTR)TIMEOUT_FILE, MODE_OLDFILE);
+    if (!fh) return GK_DEFAULT_TIMEOUT / 60;
+    n = Read(fh, t, sizeof t - 1);
+    Close(fh);
+    for (i = 0; i < n && t[i] >= '0' && t[i] <= '9' && v < 429496729UL; i++) v = v * 10 + (ULONG)(t[i] - '0');
+    if (i == 0 || (i < n && t[i] != '\n')) return GK_DEFAULT_TIMEOUT / 60;
+    v = (v + 59) / 60;
+    return v > 24 * 60 ? 24 * 60 : (LONG)v;
 }
 
 static int open_window(void)
@@ -278,7 +298,7 @@ static int open_window(void)
     ng.ng_LeftEdge = scr->WBorLeft + 8 + 30 * (fh * 3 / 4); ng.ng_TopEdge += fh + 12; ng.ng_Width = 6 * (fh * 3 / 4) + 12;
     ng.ng_Height = fh + 6; ng.ng_GadgetText = (UBYTE *)"Lock after (minutes, 0 never)"; ng.ng_Flags = PLACETEXT_LEFT;
     ng.ng_GadgetID = G_TIMEOUT;
-    g = gad[G_TIMEOUT] = CreateGadget(INTEGER_KIND, g, &ng, GTIN_Number, GK_DEFAULT_TIMEOUT / 60, GTIN_MaxChars, 4, TAG_END);
+    g = gad[G_TIMEOUT] = CreateGadget(INTEGER_KIND, g, &ng, GTIN_Number, saved_minutes(), GTIN_MaxChars, 4, TAG_END);
 
     ng.ng_LeftEdge = scr->WBorLeft + 8; ng.ng_TopEdge += fh + 12 + fh + 4; ng.ng_Width = w - 16; ng.ng_Height = 6 * (fh + 2);
     ng.ng_GadgetText = (UBYTE *)"Kept elsewhere (not in your keys)"; ng.ng_Flags = PLACETEXT_ABOVE; ng.ng_GadgetID = G_ELSE;
@@ -310,6 +330,7 @@ static void close_window(void)
 
 static void press(UWORD id, UWORD code)
 {
+    held = 0;                           /* a press clears the error shown */
     switch (id) {
     case G_LIST: chosen = code; break;
     case G_UNLOCK: report(GK_Unlock(win, 0)); break;
@@ -320,8 +341,8 @@ static void press(UWORD id, UWORD code)
     case G_TIMEOUT: {
         struct StringInfo *si = (struct StringInfo *)gad[G_TIMEOUT]->SpecialInfo;
         LONG m = si->LongInt;
-        if (m < 0 || m > 24 * 60) { set_state("The timeout is 0 to 1440 minutes"); break; }
-        GK_SetTimeout((ULONG)m * 60);
+        if (m < 0 || m > 24 * 60) { set_state("The timeout is 0 to 1440 minutes"); held = 1; break; }
+        if (GK_SetTimeout((ULONG)m * 60)) { set_state("Set until reboot: it couldn't be saved"); held = 1; break; }
         show_status();
         break;
     }
