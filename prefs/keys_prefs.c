@@ -6,9 +6,16 @@
  *   - Unlock, Lock now, Delete (with a check), Delete all of one service,
  *     Change passphrase and the timeout;
  *   - the read-only "kept elsewhere" list (gk_prefs.c).
+ * The state line and the list follow the library once a second through
+ * timer.device, so an unlock or lock by another program shows even while
+ * the window isn't the active one (IntuiTicks only come to that one).
  * The ARexx port GFOPENKEYS.1 (gfopensdk arexx/apphost.h) runs the
  * commands of gk_prefs.c with GKF_NOPROMPT: no requester ever opens for it.
  * MIT, Copyright (c) 2026 AmiCradle Team. */
+/* libnix's headers first: its struct timeval is the one devices/timer.h then uses */
+#include <stdio.h>
+#include <string.h>
+
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <exec/lists.h>
@@ -17,14 +24,12 @@
 #include <utility/hooks.h>
 #include <dos/dos.h>
 #include <dos/datetime.h>
+#include <devices/timer.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/intuition.h>
 #include <proto/gadtools.h>
 #include <proto/gfopenkeys.h>
-
-#include <stdio.h>
-#include <string.h>
 
 #include "arexx/apphost.h"
 #include "gk_prefs.h"
@@ -310,7 +315,7 @@ static int open_window(void)
                          WA_InnerWidth, w, WA_InnerHeight, ng.ng_TopEdge + ng.ng_Height + 8 - scr->WBorTop - fh - 1,
                          WA_Gadgets, (ULONG)glist, WA_Activate, TRUE, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
                          WA_CloseGadget, TRUE,
-                         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | IDCMP_INTUITICKS
+                         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY
                                    | LISTVIEWIDCMP | BUTTONIDCMP | INTEGERIDCMP,
                          TAG_END);
     UnlockPubScreen(NULL, scr);
@@ -353,7 +358,6 @@ static void press(UWORD id, UWORD code)
 static void window_events(void)
 {
     struct IntuiMessage *m;
-    static int ticks;
     while (win && (m = GT_GetIMsg(win->UserPort))) {
         ULONG cls = m->Class;
         UWORD code = m->Code;
@@ -367,9 +371,6 @@ static void window_events(void)
             if (code == 27) quit = 1;
             else if (code == 'u' || code == 'U') press(G_UNLOCK, 0);
             else if (code == 'l' || code == 'L') press(G_LOCK, 0);
-            break;
-        case IDCMP_INTUITICKS:
-            if (++ticks >= 10) { ticks = 0; show_status(); }   /* about once a second */
             break;
         }
     }
@@ -437,11 +438,52 @@ static void rx_activate(void *u)
 
 static const ah_hooks hooks = { GKP_VERSION, rx_quit, rx_activate, NULL, NULL };
 
+/* ---- once a second, through timer.device ---------------------------------- */
+
+static struct MsgPort *tport;
+static struct timerequest *treq;
+static int tsent;
+
+static void tick_send(void)
+{
+    treq->tr_node.io_Command = TR_ADDREQUEST;
+    treq->tr_time.tv_secs = 1;
+    treq->tr_time.tv_micro = 0;
+    SendIO((struct IORequest *)treq);
+    tsent = 1;
+}
+
+/* 0 when there's no timer: the window then follows only its own presses */
+static ULONG tick_open(void)
+{
+    if (!(tport = CreateMsgPort())) return 0;
+    if (!(treq = (struct timerequest *)CreateIORequest(tport, sizeof *treq))) return 0;
+    if (OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_VBLANK, (struct IORequest *)treq, 0)) {
+        DeleteIORequest((struct IORequest *)treq);
+        treq = NULL;
+        return 0;
+    }
+    tick_send();
+    return 1UL << tport->mp_SigBit;
+}
+
+static void tick_close(void)
+{
+    if (treq) {
+        if (tsent) { AbortIO((struct IORequest *)treq); WaitIO((struct IORequest *)treq); }
+        CloseDevice((struct IORequest *)treq);
+        DeleteIORequest((struct IORequest *)treq);
+    }
+    if (tport) DeleteMsgPort(tport);
+    treq = NULL; tport = NULL; tsent = 0;
+}
+
 /* ---- main ------------------------------------------------------------------ */
 
 int main(void)
 {
     ah_host *rexx;
+    ULONG tsig;
     int rc = 0;
     if (!(GFOpenKeysBase = OpenLibrary((CONST_STRPTR)GFOPENKEYS_NAME, GFOPENKEYS_VERSION))) {
         printf("Keys needs %s %d, with gfopencrypto.library 2.4 and gfopentls.library 1.5, in LIBS:\n",
@@ -455,14 +497,21 @@ int main(void)
         rc = 20;
         quit = 1;
     }
+    tsig = tick_open();
     while (!quit) {
         ULONG got;
         if (dirty) refill();
-        got = Wait((1UL << win->UserPort->mp_SigBit) | ah_sigmask(rexx) | SIGBREAKF_CTRL_C);
+        got = Wait((1UL << win->UserPort->mp_SigBit) | ah_sigmask(rexx) | tsig | SIGBREAKF_CTRL_C);
         if (got & SIGBREAKF_CTRL_C) quit = 1;
         if (got & ah_sigmask(rexx)) ah_handle(rexx);
         window_events();
+        if ((got & tsig) && CheckIO((struct IORequest *)treq)) {
+            WaitIO((struct IORequest *)treq);
+            show_status();                  /* sets dirty when another program locked or unlocked */
+            tick_send();
+        }
     }
+    tick_close();
     close_window();
     ah_close(rexx);
     free_rows(&keys);
