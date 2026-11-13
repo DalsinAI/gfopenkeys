@@ -13,7 +13,9 @@
 /* What the library tells the user about (gk_ui.warn) */
 #define GKW_OLDER_COPY   1           /* .bak or .new was opened: the newest change may be gone */
 #define GKW_ROLLED_BACK  2           /* the store's write counter is lower than one seen before */
-#define GKW_READONLY     3           /* an older passphrase opened .bak: read-only until the newer one is used */
+#define GKW_READONLY     3           /* an older passphrase opened .bak: read-only until the user locks and
+                                        unlocks again with the newer passphrase */
+#define GKW_NO_COUNT     4           /* the .count file is missing or unreadable: the rollback check starts again */
 
 typedef struct gk_ui {
     /* Ask for the passphrase into buf (at most cap bytes, *len set). owner is

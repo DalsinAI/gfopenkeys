@@ -57,21 +57,26 @@ gk_store *gkl_store(gk_lib *l) { return l->s; }
 
 /* ---- the write counter seen before (DESIGN.md section 4, "Rolling back") -- */
 
-static uint64_t seen_counter(gk_lib *l)
+/* The highest counter seen; *ok 0 when the file is missing or isn't 16 hex digits */
+static uint64_t read_counter(gk_lib *l, int *ok)
 {
     uint8_t *p;
     size_t n, i;
     uint64_t v = 0;
+    *ok = 0;
     if (l->env.read(l->env.u, l->count_path, &p, &n)) return 0;
+    *ok = n == 16;
     for (i = 0; i < n && i < 16; i++) {
         uint8_t c = p[i];
         if (c >= '0' && c <= '9') v = v << 4 | (uint64_t)(c - '0');
         else if (c >= 'a' && c <= 'f') v = v << 4 | (uint64_t)(c - 'a' + 10);
-        else break;
+        else { *ok = 0; v = 0; break; }
     }
     free(p);
     return v;
 }
+
+static uint64_t seen_counter(gk_lib *l) { int ok; return read_counter(l, &ok); }
 
 static void note_counter(gk_lib *l)
 {
@@ -88,8 +93,10 @@ static void warn(gk_lib *l, int what, uint64_t a, uint64_t b) { if (l->ui.warn) 
 
 static void after_open(gk_lib *l)
 {
-    uint64_t gen = gk_generation(l->s), seen = seen_counter(l);
+    int ok;
+    uint64_t gen = gk_generation(l->s), seen = read_counter(l, &ok);
     l->rolled_back = gen < seen;
+    if (!ok) warn(l, GKW_NO_COUNT, gen, 0);   /* visible, not a silent restart (Franklin, #3) */
     if (gk_opened_from(l->s) > 0) warn(l, GKW_OLDER_COPY, gen, seen);
     if (gk_is_readonly(l->s)) warn(l, GKW_READONLY, gen, seen);
     if (l->rolled_back) warn(l, GKW_ROLLED_BACK, gen, seen);
@@ -211,6 +218,7 @@ int gkl_change_pass(gk_lib *l, const char *owner, const gk_kdf *kdf, unsigned lo
     char buf[GK_PASS_MAX];
     size_t len = 0;
     int r;
+    if (!gk_exists(l->s)) return GKE_NOSTORE;      /* nothing to change: no new store made here (Agnus, #3) */
     if (flags & GKF_NOPROMPT) return GKE_LOCKED;   /* it can only ask, so never from ARexx */
     if ((r = writable(l, owner, flags))) return r;
     /* the current passphrase first, even though the store is unlocked */
