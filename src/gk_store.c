@@ -470,7 +470,7 @@ static void recover(gk_store *s)
 int gk_unlock(gk_store *s, const char *pass, size_t pass_len)
 {
     const char *names[3];
-    int i, r, bad_pass = 0, any = 0, other = 0;
+    int i, r, bad_pass = 0, any = 0, other = 0, store_bad_pass = 0;
     gk_lock(s);
     /* .new first after the name: it was read back and checked before the old file went to .bak */
     names[0] = s->path; names[1] = s->path_new; names[2] = s->path_bak;
@@ -484,9 +484,14 @@ int gk_unlock(gk_store *s, const char *pass, size_t pass_len)
             s->unlocked = 1;
             s->from = i;
             touch(s);
-            if (i) recover(s);        /* put the good copy back under the name */
+            /* Put the good copy back under the name, unless the store file is
+             * whole but under another passphrase (a passphrase change whose
+             * second save failed): that file is newer, so it stays where it
+             * is and the caller warns (gk_opened_from) */
+            if (i && !store_bad_pass) recover(s);
             return GKE_OK;
         }
+        if (i == 0 && r == GKE_BADPASS) store_bad_pass = 1;
         /* A damaged header can ask Argon2id for more memory than there is:
          * that copy fails with NOMEM, and the next copy is still tried */
         if (r == GKE_BADPASS) bad_pass = 1;

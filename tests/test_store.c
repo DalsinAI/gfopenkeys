@@ -594,6 +594,36 @@ static void test_recover_strict_remove(void)
     fs_free(&x);
 }
 
+/* change_pass's second save fails: the store is under the new passphrase,
+ * .bak under the old one. The old passphrase opens .bak but must not move
+ * the newer store aside. */
+static void test_old_pass_after_half_change(void)
+{
+    fs x; gk_env e; gk_store *s;
+    uint8_t *keep; size_t keep_len;
+    mfile *m;
+    fs_init(&x, &e);
+    gk_open(&s, &e, PATH);
+    gk_create(s, PASS, strlen(PASS), &KDF);
+    gk_put(s, "ssh", "h", "u", (const uint8_t *)"pw", 2, NULL, NULL, 0);
+    x.ops = 0; x.crash_at = 4;                 /* the first save's write, remove, 2 renames go; the second's write fails */
+    CHECK(gk_change_pass(s, "new pass", 8, &KDF) == GKE_OK);
+    x.crash_at = -1;
+    gk_close(s);
+    m = fs_get(&x, PATH);
+    keep_len = m->len; keep = malloc(keep_len); memcpy(keep, m->data, keep_len);
+    gk_open(&s, &e, PATH);
+    CHECK(gk_unlock(s, PASS, strlen(PASS)) == GKE_OK && gk_opened_from(s) == 2);
+    m = fs_get(&x, PATH);
+    CHECK(m && m->len == keep_len && !memcmp(m->data, keep, keep_len));   /* left where it was */
+    CHECK(fs_get(&x, PATH ".bad") == NULL);
+    gk_lock(s);
+    CHECK(gk_unlock(s, "new pass", 8) == GKE_OK && gk_opened_from(s) == 0);
+    free(keep);
+    gk_close(s);
+    fs_free(&x);
+}
+
 int main(void)
 {
     test_aead();
@@ -610,6 +640,7 @@ int main(void)
     test_last_used();
     test_bad_kdf_header();
     test_recover_strict_remove();
+    test_old_pass_after_half_change();
     printf("%d/%d checks passed\n", checks - fails, checks);
     return fails != 0;
 }
