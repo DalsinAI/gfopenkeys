@@ -37,6 +37,28 @@
 #define GK_MAX_ENTRIES 4096
 #define GK_DEFAULT_TIMEOUT 900     /* seconds after the last use; 0 = until reboot */
 
+/* The library's structures (Amiga programs; the host tests use src/gk_lib.h) */
+#ifdef EXEC_TYPES_H
+struct GKStatus {                 /* GK_Status: nothing secret */
+    LONG  gs_Exists, gs_Unlocked, gs_ReadOnly, gs_RolledBack;
+    LONG  gs_OpenedFrom;          /* 0 the store, 1 .new, 2 .bak, -1 locked */
+    ULONG gs_Count;
+    ULONG gs_SecondsLeft;         /* 0xFFFFFFFF with no timeout */
+    ULONG gs_CounterHi, gs_CounterLo;
+};
+
+struct GKEntryInfo {              /* GK_List's hook message: never the secret */
+    CONST_STRPTR ge_Service, ge_Host, ge_User, ge_Label, ge_Owner;
+    ULONG ge_CreatedHi, ge_CreatedLo, ge_LastUsedHi, ge_LastUsedLo;
+};
+
+struct GKImport {                 /* one entry for GK_Import */
+    CONST_STRPTR gi_Service, gi_Host, gi_User, gi_Label;
+    CONST UBYTE *gi_Secret;
+    ULONG gi_SecretLen;
+};
+#endif
+
 /* The service registry (DESIGN.md section 3). A new program adds its word here. */
 #define GKS_SSH           "ssh"
 #define GKS_SSH_KEY       "ssh-key"       /* host empty, user the key's fingerprint */
