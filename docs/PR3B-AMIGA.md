@@ -27,13 +27,14 @@ PR 3a put everything the library decides into plain C (`src/gk_store.c`, `src/gk
 ### The requester (`gk_amiga_ui.c`)
 
 - **Text.** It says "A program calling itself *owner* asks for your keys". The owner comes from `gkl_owner(FindTask(0)->tc_Node.ln_Name)`, copied under `Forbid()`.
-- **The passphrase field** shows dots, never what is typed. Its buffer and UndoBuffer are wiped (`OC_Cleanse`) when the requester closes, whether it was OK or Cancel.
-- **`confirm`:** a second field, plus a strength hint. OK stays off until both fields match.
+- **The passphrase field** shows `*`, never what is typed (a `GTST_EditHook` keeps the real text in the library's buffer). Its buffer and UndoBuffer are wiped (`OC_Cleanse`) when the requester closes, whether it was OK or Cancel.
+- **`confirm`:** a second field. If the two differ or are empty, the requester says so and stays open. A strength hint is for later.
 - **`warn`:** an `EasyRequest`. gfopengadtools draws EasyRequest in the theme on GFOpenLayout (REQUESTERS.md section 3), so it is no exception to UI-LAYER-RULE.
   - `GKW_OLDER_COPY`: "An older copy of your keys was opened. The last change may be missing."
   - `GKW_ROLLED_BACK`: "These keys are older than ones used before on this Amiga (count *a*, seen *b*)."
-  - `GKW_READONLY`: "Opened with an older passphrase. Nothing can be saved until you use the newer one."
-- **`wait`:** `Delay(50 * seconds)`, with the window showing "Wait *n* s".
+  - `GKW_READONLY`: "Opened with an older passphrase. Nothing can be saved: lock the keys, then unlock them with the newer passphrase."
+  - `GKW_NO_COUNT`: "The keys' counter file was missing or unreadable. An older copy of the keys can't be told this time."
+- **`wait`:** `Delay(50 * seconds)` before the next requester opens.
 - **Never with `GKF_NOPROMPT`.** gk_lib doesn't call it then.
 
 ## Build (on daletop, the os32-gcc16 stove)
