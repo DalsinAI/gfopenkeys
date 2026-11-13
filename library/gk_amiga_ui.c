@@ -223,7 +223,46 @@ static void warn(void *u, int what, uint64_t counter, uint64_t seen)
     EasyRequest(*c->parent, &es, NULL, (ULONG)counter, (ULONG)seen);
 }
 
-static void wait_s(void *u, uint32_t seconds) { (void)u; Delay(50 * seconds); }
+/* "Keys: wrong passphrase. Wait n s" with no stdio (the library has none) */
+static void wait_title(char out[48], uint32_t n)
+{
+    static const char head[] = "Keys: wrong passphrase. Wait ";
+    char d[12];
+    int i = 0;
+    size_t o = sizeof head - 1;
+    memcpy(out, head, o);
+    do { d[i++] = (char)('0' + n % 10); n /= 10; } while (n && i < 10);
+    while (i) out[o++] = d[--i];
+    out[o++] = ' '; out[o++] = 's'; out[o] = 0;
+}
+
+/* The backoff after wrong passphrases: a small window that counts down
+ * "Wait n s", so the user sees why nothing is asked. No IDCMP: it can't be
+ * closed early. Without a window it just waits. */
+static void wait_s(void *u, uint32_t seconds)
+{
+    ui_ctx *c = u;
+    struct Screen *scr = *c->parent ? (*c->parent)->WScreen : NULL;
+    struct Screen *locked = NULL;
+    struct Window *win = NULL;
+    static char title[48];
+    uint32_t left = seconds;
+    if (!scr) scr = locked = LockPubScreen(NULL);
+    wait_title(title, left);
+    if (scr)
+        win = OpenWindowTags(NULL, WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+                             WA_InnerWidth, 26 * scr->Font->ta_YSize, WA_InnerHeight, 2,
+                             WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_RMBTrap, TRUE, WA_IDCMP, 0UL, TAG_END);
+    if (locked) UnlockPubScreen(NULL, locked);
+    for (; left; left--) {
+        if (win) {
+            wait_title(title, left);
+            SetWindowTitles(win, (UBYTE *)title, (UBYTE *)~0);
+        }
+        Delay(50);
+    }
+    if (win) CloseWindow(win);
+}
 
 void gk_amiga_ui(gk_ui *ui, struct Window **parent)
 {
