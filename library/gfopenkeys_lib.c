@@ -118,13 +118,17 @@ static volatile int lock_pending;
 
 static void release(void)
 {
-    if (lock_pending) { lock_pending = 0; gkl_lock(keys); }
+    /* Only the outermost release acts on the note (Agnus, #8): exec's
+     * semaphores nest, so a GK_List hook may call back in, and locking at
+     * that inner release would wipe the entries gk_list is still walking */
+    int outer = sem.ss_NestCount == 1;
+    if (outer && lock_pending) { lock_pending = 0; gkl_lock(keys); }
     ReleaseSemaphore(&sem);
     /* A GK_Lock may have left its note after the check above, while the
      * semaphore was still held (Franklin, #8): look again now it's free.
      * With GK_Lock's own second try, a note left at any moment is taken
      * by one of them, or by whoever holds the semaphore next. */
-    while (lock_pending && AttemptSemaphore(&sem)) {
+    while (outer && lock_pending && AttemptSemaphore(&sem)) {
         lock_pending = 0;
         gkl_lock(keys);
         ReleaseSemaphore(&sem);
