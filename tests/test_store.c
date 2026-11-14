@@ -275,6 +275,44 @@ static void test_timeout(void)
     fs_free(&x);
 }
 
+/* A callback that lets the timeout pass and looks the store up again, as a
+ * slow export hook calling GK_Find would (Agnus, #8) */
+typedef struct { gk_store *s; fs *x; int seen, held; } slow_walk;
+static int slow_lister(void *ctx, const gk_info *in)
+{
+    slow_walk *w = ctx;
+    uint8_t b[8];
+    size_t n = sizeof b;
+    int inner = -100;
+    (void)in;
+    w->x->clock += 5;
+    if (gk_is_unlocked(w->s) && gk_count(w->s) == 3 && gk_find(w->s, "ssh", "h", "u1", b, &n) == GKE_OK &&
+        gk_list(w->s, NULL, lister, &inner) == GKE_OK)
+        w->held++;
+    w->x->clock += 5;
+    w->seen++;
+    return 0;
+}
+
+static void test_timeout_during_list(void)
+{
+    fs x; gk_env e; gk_store *s;
+    slow_walk w;
+    fs_init(&x, &e);
+    gk_open(&s, &e, PATH);
+    gk_create(s, PASS, strlen(PASS), &KDF);
+    gk_put(s, "ssh", "h", "u1", (const uint8_t *)"pw", 2, NULL, NULL, 0);
+    gk_put(s, "ssh", "h", "u2", (const uint8_t *)"pw", 2, NULL, NULL, 0);
+    gk_put(s, "ssh", "h", "u3", (const uint8_t *)"pw", 2, NULL, NULL, 0);
+    gk_set_timeout(s, 1);
+    w.s = s; w.x = &x; w.seen = 0; w.held = 0;
+    CHECK(gk_list(s, NULL, slow_lister, &w) == GKE_OK);
+    CHECK(w.seen == 3 && w.held == 3);              /* the whole walk, never wiped under it */
+    CHECK(!gk_is_unlocked(s) && gk_count(s) == 0);  /* and the timeout locks once it is over */
+    gk_close(s);
+    fs_free(&x);
+}
+
 static void test_import(void)
 {
     fs x; gk_env e; gk_store *s;
@@ -555,6 +593,7 @@ int main(void)
     test_crash();
     test_recover();
     test_timeout();
+    test_timeout_during_list();
     test_import();
     test_change_pass();
     test_counter_nonce();
