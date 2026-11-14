@@ -40,16 +40,18 @@ struct Library *GFOpenKeysBase;
 
 /* ---- the library calls, for gk_prefs.c's commands ------------------------- */
 
-static void op_status(void *u, gk_status *st)
+static int op_status(void *u, gk_status *st)
 {
     struct GKStatus s;
+    LONG r;
     (void)u;
     memset(st, 0, sizeof *st);
-    if (GK_Status(&s)) return;
+    if ((r = GK_Status(&s))) return (int)r;
     st->exists = s.gs_Exists; st->unlocked = s.gs_Unlocked; st->readonly = s.gs_ReadOnly;
     st->rolled_back = s.gs_RolledBack; st->opened_from = s.gs_OpenedFrom; st->count = s.gs_Count;
     st->seconds_left = s.gs_SecondsLeft;
     st->counter = ((uint64_t)s.gs_CounterHi << 32) | s.gs_CounterLo;
+    return 0;
 }
 
 static void op_lock(void *u) { (void)u; GK_Lock(); }
@@ -179,7 +181,10 @@ static void set_state(const char *s)
 static void show_status(void)
 {
     gk_status st;
-    op_status(NULL, &st);
+    if (op_status(NULL, &st)) {             /* busy: another program's requester is open */
+        if (!held) set_state("Waiting: another program is asking for your passphrase");
+        return;
+    }
     if (st.unlocked != was_unlocked) { was_unlocked = st.unlocked; dirty = 1; }
     if (held) return;
     if (!st.exists)

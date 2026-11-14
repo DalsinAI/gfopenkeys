@@ -19,7 +19,7 @@
  * the GK_* calls of gfopenkeys.library; the host tests with gk_lib.
  * delete always means GKF_NOPROMPT. */
 typedef struct gkp_ops {
-    void (*status)(void *u, gk_status *st);
+    int (*status)(void *u, gk_status *st);           /* 0, or GKE_BUSY while a requester holds the library */
     void (*lock)(void *u);
     int (*list)(void *u, const char *service, int (*fn)(void *ctx, const gk_info *info), void *ctx);
     int (*del)(void *u, const char *service, const char *host, const char *user);
@@ -33,7 +33,7 @@ typedef struct gkp_ops {
 /* One ARexx command line. The text goes in result (always ends in 0): RESULT
  * when 0 is returned, else the reason, for RC2/LASTERROR. The app host
  * answers QUIT, ACTIVATE and DEACTIVATE itself.
- *   STATUS                 "exists 1 unlocked 1 readonly 0 count 3 left 840" (left: seconds, or none)
+ *   STATUS                 "exists 1 unlocked 1 readonly 0 count 3 left 840" (left: seconds, or none); 5 when busy
  *   LOCK
  *   LIST [[SERVICE=]word]  escaped names, one a line; 10 when locked
  *   DELETE name            name as LIST gives it, quotes allowed

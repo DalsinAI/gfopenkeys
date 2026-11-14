@@ -23,17 +23,20 @@ static int ui_ask(void *u, const char *owner, unsigned tries, int confirm, char 
 static void ui_warn(void *u, int what, uint64_t a, uint64_t b) { (void)u; (void)what; (void)a; (void)b; }
 static void ui_wait(void *u, uint32_t s) { (void)u; (void)s; }
 
-static void o_status(void *u, gk_status *st) { gkl_status(u, st); }
+static int busy;                   /* as the library answers while another program's requester is open */
+static int o_status(void *u, gk_status *st) { if (busy) return GKE_BUSY; gkl_status(u, st); return 0; }
 static void o_lock(void *u) { gkl_lock(u); }
 static int o_list(void *u, const char *service, int (*fn)(void *, const gk_info *), void *ctx)
 {
+    if (busy) return GKE_BUSY;
     return gk_list(gkl_store(u), service, fn, ctx);
 }
 static int o_del(void *u, const char *service, const char *host, const char *user)
 {
+    if (busy) return GKE_BUSY;
     return gkl_delete(u, "Keys", service, host, user, GKF_NOPROMPT);
 }
-static int o_timeout(void *u, uint32_t s) { return gkl_set_timeout(u, s); }
+static int o_timeout(void *u, uint32_t s) { return busy ? GKE_BUSY : gkl_set_timeout(u, s); }
 static const char *o_err(void *u, int e)
 {
     (void)u;
@@ -42,6 +45,7 @@ static const char *o_err(void *u, int e)
     case GKE_LOCKED: return "The keys are locked";
     case GKE_BADPASS: return "Wrong passphrase";
     case GKE_BADNAME: return "Bad name";
+    case GKE_BUSY: return "Busy";
     default: return NULL;
     }
 }
@@ -196,6 +200,24 @@ static void test_rexx_builtins(void)
     rig_close(&g);
 }
 
+/* while another program's requester holds the library, every command answers at once */
+static void test_rexx_busy(void)
+{
+    rig g;
+    rig_open(&g);
+    put(&g, "ssh", "h", "u");
+    busy = 1;
+    CHECK(rx(&g, "STATUS") == GKP_RC_WARN && !strcmp(g.r, "Busy"));
+    CHECK(rx(&g, "LIST") == GKP_RC_ERROR && !strcmp(g.r, "Busy"));
+    CHECK(rx(&g, "DELETE ssh/h/u") == GKP_RC_ERROR && !strcmp(g.r, "Busy"));
+    CHECK(rx(&g, "TIMEOUT 60") == GKP_RC_WARN && !strcmp(g.r, "Busy"));
+    CHECK(rx(&g, "VERSION") == GKP_RC_OK);
+    busy = 0;
+    CHECK(rx(&g, "LIST") == GKP_RC_OK && !strcmp(g.r, "ssh/h/u"));   /* nothing was lost */
+    CHECK(asked == 1);
+    rig_close(&g);
+}
+
 static void test_elsewhere(void)
 {
     size_t n, i;
@@ -218,6 +240,7 @@ int main(void)
     test_rexx_unlocked();
     test_rexx_timeout();
     test_rexx_builtins();
+    test_rexx_busy();
     test_elsewhere();
     printf("%d/%d prefs checks passed\n", checks - fails, checks);
     return fails != 0;

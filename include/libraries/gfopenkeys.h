@@ -23,6 +23,7 @@
 #define GKE_CANCEL    (-12)   /* the user cancelled the passphrase requester */
 #define GKE_CRYPTO    (-13)   /* gfopencrypto or the random number source failed */
 #define GKE_READONLY  (-14)   /* an older copy was opened with an older passphrase: no writes until the newer one is used */
+#define GKE_BUSY      (-15)   /* GKF_NOPROMPT or GK_Status while another program's passphrase requester is open: try again */
 
 /* Flags */
 #define GKF_NOPROMPT  (1UL << 0)   /* never open a requester (ARexx callers must pass it) */
