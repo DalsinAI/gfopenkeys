@@ -343,7 +343,10 @@ static void GK_Lock(B)
     if (!is_process()) return;           /* writing last-used times needs DOS */
     if (!AttemptSemaphore(&sem)) {       /* a requester is open: its call locks on the way out */
         lock_pending = 1;
-        return;
+        /* The holder may have run release() between the try above and the
+         * note (Agnus, #8): try once more, so the lock isn't lost or left
+         * to an unrelated later call */
+        if (!AttemptSemaphore(&sem)) return;
     }
     gkl_lock(keys);
     release();
