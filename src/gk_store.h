@@ -81,6 +81,9 @@ int gk_put(gk_store *s, const char *service, const char *host, const char *user,
            const uint8_t *secret, size_t secret_len, const char *label, const char *owner, unsigned long flags);
 int gk_delete(gk_store *s, const char *service, const char *host, const char *user);
 /* fn returns nonzero to stop; service NULL for every entry */
+/* The timeout doesn't lock while fn runs, so fn may call gk_find, gk_list
+ * and the status calls. fn must not change the store (put, remove, import,
+ * change_pass, lock): the library answers those GKE_BUSY from a hook. */
 int gk_list(gk_store *s, const char *service, int (*fn)(void *ctx, const gk_info *info), void *ctx);
 /* One write for a program's migration; *added: how many went in */
 int gk_import(gk_store *s, const gk_import_item *list, size_t count, const char *from, unsigned long flags, size_t *added);

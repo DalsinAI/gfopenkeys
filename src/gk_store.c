@@ -54,6 +54,7 @@ struct gk_store {
     int from;                  /* which copy the last unlock opened: 0 the store, 1 .new, 2 .bak */
     int dirty;                 /* last-used times changed by finds, not yet written */
     int readonly;              /* opened .bak with an older passphrase than the store's: no writes */
+    unsigned walking;          /* gk_list calls under way: the timeout waits until they return */
 };
 
 static void wipe(gk_store *s);
@@ -528,7 +529,9 @@ void gk_lock(gk_store *s)
 
 int gk_is_unlocked(gk_store *s)
 {
-    if (s->unlocked && s->timeout && s->env.now(s->env.u) - s->last_use >= s->timeout) gk_lock(s);
+    /* Not while a list is walked: a find from its callback would wipe the
+     * entries under the walk (Agnus, #8). The next call after it locks. */
+    if (s->unlocked && !s->walking && s->timeout && s->env.now(s->env.u) - s->last_use >= s->timeout) gk_lock(s);
     return s->unlocked;
 }
 
@@ -651,6 +654,7 @@ int gk_list(gk_store *s, const char *service, int (*fn)(void *ctx, const gk_info
 {
     size_t i;
     if (!gk_is_unlocked(s)) return GKE_LOCKED;   /* listing is not a use: the timer runs on */
+    s->walking++;
     for (i = 0; i < s->n; i++) {
         gk_info in;
         const entry *x = &s->e[i];
@@ -659,6 +663,7 @@ int gk_list(gk_store *s, const char *service, int (*fn)(void *ctx, const gk_info
         in.label = x->label; in.owner = x->owner; in.created = x->created; in.last_used = x->last_used;
         if (fn(ctx, &in)) break;
     }
+    s->walking--;
     return GKE_OK;
 }
 
