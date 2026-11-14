@@ -120,6 +120,15 @@ static void release(void)
 {
     if (lock_pending) { lock_pending = 0; gkl_lock(keys); }
     ReleaseSemaphore(&sem);
+    /* A GK_Lock may have left its note after the check above, while the
+     * semaphore was still held (Franklin, #8): look again now it's free.
+     * With GK_Lock's own second try, a note left at any moment is taken
+     * by one of them, or by whoever holds the semaphore next. */
+    while (lock_pending && AttemptSemaphore(&sem)) {
+        lock_pending = 0;
+        gkl_lock(keys);
+        ReleaseSemaphore(&sem);
+    }
 }
 
 /* ---- the timeout process --------------------------------------------------- */
