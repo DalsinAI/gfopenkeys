@@ -112,6 +112,29 @@ const struct Resident lib_romtag = {
     (char *)lib_name, (char *)lib_id, (APTR)&lib_inittable
 };
 
+/* A GK_Lock that came while the semaphore was held (a requester open): done
+ * by whoever holds it, on the way out */
+static volatile int lock_pending;
+
+static void release(void)
+{
+    /* Only the outermost release acts on the note (Agnus, #8): exec's
+     * semaphores nest, so a GK_List hook may call back in, and locking at
+     * that inner release would wipe the entries gk_list is still walking */
+    int outer = sem.ss_NestCount == 1;
+    if (outer && lock_pending) { lock_pending = 0; gkl_lock(keys); }
+    ReleaseSemaphore(&sem);
+    /* A GK_Lock may have left its note after the check above, while the
+     * semaphore was still held (Franklin, #8): look again now it's free.
+     * With GK_Lock's own second try, a note left at any moment is taken
+     * by one of them, or by whoever holds the semaphore next. */
+    while (outer && lock_pending && AttemptSemaphore(&sem)) {
+        lock_pending = 0;
+        gkl_lock(keys);
+        ReleaseSemaphore(&sem);
+    }
+}
+
 /* ---- the timeout process --------------------------------------------------- */
 
 /* 1 when the library is closed and waiting to be expunged (look under Forbid) */
@@ -142,7 +165,7 @@ static void ticker_main(void)
         }
         ObtainSemaphore(&sem);
         gk_is_unlocked(gkl_store(keys));   /* locks (and wipes) when the timeout has passed */
-        ReleaseSemaphore(&sem);
+        release();
     }
     ticker = NULL;
 }
@@ -255,14 +278,23 @@ static void owner_of_caller(char out[GK_MAX_OWNER + 1])
     gkl_owner(out, n ? raw : NULL);
 }
 
-#define ENTER(win) \
+/* With GKF_NOPROMPT a call never waits: while another call holds the
+ * semaphore (its requester open) it answers GKE_BUSY at once, so no
+ * requester holds up an ARexx command (ARexx-RULE.md rule 4) */
+#define ENTER_F(win, flags) \
     char owner[GK_MAX_OWNER + 1]; LONG r; \
     (void)base; \
     if (!is_process()) return GKE_IO; \
     owner_of_caller(owner); \
-    ObtainSemaphore(&sem); \
+    if ((flags) & GKF_NOPROMPT) { if (!AttemptSemaphore(&sem)) return GKE_BUSY; } \
+    else ObtainSemaphore(&sem); \
     parent = (win)
-#define LEAVE() parent = NULL; ReleaseSemaphore(&sem); return r
+#define ENTER(win) ENTER_F(win, 0)
+#define LEAVE() parent = NULL; release(); return r
+/* A GK_List hook runs with the semaphore held, and exec's semaphores nest,
+ * so a call from the hook gets in. One that changes the store would change
+ * it under gk_list's walk (Franklin, #8): it answers GKE_BUSY instead */
+#define NOT_FROM_HOOK() if (sem.ss_NestCount > 1) { r = GKE_BUSY; LEAVE(); }
 
 static ULONG GK_Version(B) { (void)base; return (LIB_VERSION << 16) | LIB_REVISION; }
 
@@ -270,7 +302,7 @@ static LONG GK_Find(REG(a0, CONST_STRPTR service), REG(a1, CONST_STRPTR host), R
                     REG(a3, UBYTE *buf), REG(d0, ULONG *len), REG(d1, ULONG flags), B)
 {
     size_t n;
-    ENTER(NULL);
+    ENTER_F(NULL, flags);
     if (!len) { r = GKE_SHORT; LEAVE(); }
     n = *len;
     r = gkl_find(keys, owner, (const char *)service, (const char *)host, (const char *)user, buf, &n, flags);
@@ -281,7 +313,8 @@ static LONG GK_Find(REG(a0, CONST_STRPTR service), REG(a1, CONST_STRPTR host), R
 static LONG GK_Store(REG(a0, CONST_STRPTR service), REG(a1, CONST_STRPTR host), REG(a2, CONST_STRPTR user),
                      REG(a3, CONST UBYTE *secret), REG(d0, ULONG len), REG(d1, CONST_STRPTR label), REG(d2, ULONG flags), B)
 {
-    ENTER(NULL);
+    ENTER_F(NULL, flags);
+    NOT_FROM_HOOK();
     r = gkl_store_entry(keys, owner, (const char *)service, (const char *)host, (const char *)user,
                         secret, len, (const char *)label, flags);
     LEAVE();
@@ -290,7 +323,8 @@ static LONG GK_Store(REG(a0, CONST_STRPTR service), REG(a1, CONST_STRPTR host), 
 static LONG GK_Delete(REG(a0, CONST_STRPTR service), REG(a1, CONST_STRPTR host), REG(a2, CONST_STRPTR user),
                       REG(d0, ULONG flags), B)
 {
-    ENTER(NULL);
+    ENTER_F(NULL, flags);
+    NOT_FROM_HOOK();
     r = gkl_delete(keys, owner, (const char *)service, (const char *)host, (const char *)user, flags);
     LEAVE();
 }
@@ -308,7 +342,7 @@ static int list_one(void *c, const gk_info *in)
 
 static LONG GK_List(REG(a0, struct Hook *hook), REG(a1, CONST_STRPTR service), REG(d0, ULONG flags), B)
 {
-    ENTER(NULL);
+    ENTER_F(NULL, flags);
     if (!hook) { r = GKE_NOTFOUND; LEAVE(); }
     if (!(r = gkl_unlock(keys, owner, flags)))
         r = gk_list(gkl_store(keys), (const char *)service, list_one, hook);
@@ -317,7 +351,7 @@ static LONG GK_List(REG(a0, struct Hook *hook), REG(a1, CONST_STRPTR service), R
 
 static LONG GK_Unlock(REG(a0, struct Window *win), REG(d0, ULONG flags), B)
 {
-    ENTER(win);
+    ENTER_F(win, flags);
     r = gkl_unlock(keys, owner, flags);
     LEAVE();
 }
@@ -326,9 +360,19 @@ static void GK_Lock(B)
 {
     (void)base;
     if (!is_process()) return;           /* writing last-used times needs DOS */
-    ObtainSemaphore(&sem);
+    if (!AttemptSemaphore(&sem)) {       /* a requester is open: its call locks on the way out */
+        lock_pending = 1;
+        /* The holder may have run release() between the try above and the
+         * note (Agnus, #8): try once more, so the lock isn't lost or left
+         * to an unrelated later call */
+        if (!AttemptSemaphore(&sem)) return;
+    }
+    /* From a GK_List hook (the semaphore nested): locking now would wipe
+     * the entries the walk is on, so leave the note for the outermost
+     * release, which locks once the walk is over (Franklin, #8) */
+    if (sem.ss_NestCount > 1) { lock_pending = 1; release(); return; }
     gkl_lock(keys);
-    ReleaseSemaphore(&sem);
+    release();
 }
 
 static LONG GK_Status(REG(a0, struct GKStatus *st), B)
@@ -337,9 +381,9 @@ static LONG GK_Status(REG(a0, struct GKStatus *st), B)
     (void)base;
     if (!st) return GKE_NOTFOUND;
     if (!is_process()) return GKE_IO;
-    ObtainSemaphore(&sem);
+    if (!AttemptSemaphore(&sem)) return GKE_BUSY;   /* never waits behind a requester */
     gkl_status(keys, &s);
-    ReleaseSemaphore(&sem);
+    release();
     st->gs_Exists = s.exists; st->gs_Unlocked = s.unlocked; st->gs_ReadOnly = s.readonly;
     st->gs_RolledBack = s.rolled_back; st->gs_OpenedFrom = s.opened_from; st->gs_Count = (ULONG)s.count;
     st->gs_SecondsLeft = s.seconds_left;
@@ -353,16 +397,17 @@ static LONG GK_SetTimeout(REG(d0, ULONG seconds), B)
 {
     LONG r;
     (void)base;
-    ObtainSemaphore(&sem);
+    if (!AttemptSemaphore(&sem)) return GKE_BUSY;   /* never waits behind a requester */
     if (is_process()) r = gkl_set_timeout(keys, seconds);
     else { gk_set_timeout(gkl_store(keys), seconds); r = GKE_IO; }
-    ReleaseSemaphore(&sem);
+    release();
     return r;
 }
 
 static LONG GK_ChangePassphrase(REG(a0, struct Window *win), REG(d0, ULONG flags), B)
 {
-    ENTER(win);
+    ENTER_F(win, flags);
+    NOT_FROM_HOOK();
     r = gkl_change_pass(keys, owner, NULL, flags);
     LEAVE();
 }
@@ -375,7 +420,8 @@ static LONG GK_Import(REG(a0, CONST struct GKImport *list), REG(d0, ULONG count)
     size_t added = 0;
     ULONG i;
     char tag[GK_MAX_OWNER + 1];
-    ENTER(NULL);
+    ENTER_F(NULL, flags);
+    NOT_FROM_HOOK();
     if (count > GK_MAX_ENTRIES) { r = GKE_TOOBIG; LEAVE(); }
     if (!count) { r = 0; LEAVE(); }
     if (!(items = AllocVec(count * sizeof *items, MEMF_ANY))) { r = GKE_NOMEM; LEAVE(); }
@@ -398,9 +444,10 @@ static CONST_STRPTR GK_ErrorString(REG(d0, LONG error), B)
         "No keys yet", "Already there", "The buffer is too small", "A service, host or user that breaks the naming rule",
         "Too big", "The keys file couldn't be read or written", "Not enough memory", "Cancelled",
         "The crypto or the random source failed",
-        "An older copy is open: nothing can be saved until the newer passphrase is used"
+        "An older copy is open: nothing can be saved until the newer passphrase is used",
+        "Busy: another program's passphrase requester is open, or a list is being walked. Try again"
     };
     (void)base;
-    if (error > 0 || error < GKE_READONLY) return (CONST_STRPTR)"Unknown error";
+    if (error > 0 || error < GKE_BUSY) return (CONST_STRPTR)"Unknown error";
     return (CONST_STRPTR)text[-error];
 }

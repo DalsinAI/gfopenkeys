@@ -161,8 +161,9 @@ static int say(outbuf *o, int rc, const char *text)
 static int cmd_status(const gkp_ops *ops, outbuf *o)
 {
     gk_status st;
+    int r;
     memset(&st, 0, sizeof st);
-    ops->status(ops->u, &st);
+    if ((r = ops->status(ops->u, &st))) return fail(ops, o, GKP_RC_WARN, r);   /* busy: try again */
     out_s(o, "exists "); out_u(o, (unsigned)st.exists != 0);
     out_s(o, " unlocked "); out_u(o, (unsigned)st.unlocked != 0);
     out_s(o, " readonly "); out_u(o, (unsigned)st.readonly != 0);

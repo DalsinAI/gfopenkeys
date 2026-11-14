@@ -57,6 +57,7 @@ This uses the same flags as gfopencrypto's build. It links `libgfopencrypto.a` a
    - The field shows dots.
    - After closing, a scan of the lab copy's memory finds no copy of the typed passphrase.
 4. **ARexx:** a call with `GKF_NOPROMPT` while locked returns `GKE_LOCKED` at once and opens no window (ARexx-RULE.md rule 4).
+   - **While a requester is open (Agnus, row 101):** start an unlock from the Shell (`GFOpenKeysTry FIND`) and leave its requester open. Then `rx "address GFOPENKEYS.1 STATUS"` must answer at once (RC 5, "Busy"), the Keys window must say "Waiting" and keep redrawing, and `GFOpenKeysTry LOCK` from a second Shell must return at once; once the passphrase is typed, the keys end up locked.
 5. **Timeout:** with `GK_SetTimeout(60)`, after 61 s with no use, `GK_Status` shows locked.
    - **Low memory (Agnus, #4):** unlock, then `Avail FLUSH` while a program still has the library open. The keys must stay unlocked straight after the flush, and STATUS must say locked once TIMEOUT 60 has passed (the timeout process is still there).
    - **Unloading:** quit every program that has it open, then `Avail FLUSH`; `GFOpenKeysLoaded` (built with the rest) must say "not in memory" and "timeout process: gone" (RC 0). The first flush only asks the timeout process to go (it writes and wipes the store first, within a second); the library leaves at the next flush, as with any library that keeps a process. It looks at exec's library list without opening the library.
