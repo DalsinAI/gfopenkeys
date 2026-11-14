@@ -291,6 +291,10 @@ static void owner_of_caller(char out[GK_MAX_OWNER + 1])
     parent = (win)
 #define ENTER(win) ENTER_F(win, 0)
 #define LEAVE() parent = NULL; release(); return r
+/* A GK_List hook runs with the semaphore held, and exec's semaphores nest,
+ * so a call from the hook gets in. One that changes the store would change
+ * it under gk_list's walk (Franklin, #8): it answers GKE_BUSY instead */
+#define NOT_FROM_HOOK() if (sem.ss_NestCount > 1) { r = GKE_BUSY; LEAVE(); }
 
 static ULONG GK_Version(B) { (void)base; return (LIB_VERSION << 16) | LIB_REVISION; }
 
@@ -310,6 +314,7 @@ static LONG GK_Store(REG(a0, CONST_STRPTR service), REG(a1, CONST_STRPTR host), 
                      REG(a3, CONST UBYTE *secret), REG(d0, ULONG len), REG(d1, CONST_STRPTR label), REG(d2, ULONG flags), B)
 {
     ENTER_F(NULL, flags);
+    NOT_FROM_HOOK();
     r = gkl_store_entry(keys, owner, (const char *)service, (const char *)host, (const char *)user,
                         secret, len, (const char *)label, flags);
     LEAVE();
@@ -319,6 +324,7 @@ static LONG GK_Delete(REG(a0, CONST_STRPTR service), REG(a1, CONST_STRPTR host),
                       REG(d0, ULONG flags), B)
 {
     ENTER_F(NULL, flags);
+    NOT_FROM_HOOK();
     r = gkl_delete(keys, owner, (const char *)service, (const char *)host, (const char *)user, flags);
     LEAVE();
 }
@@ -361,6 +367,10 @@ static void GK_Lock(B)
          * to an unrelated later call */
         if (!AttemptSemaphore(&sem)) return;
     }
+    /* From a GK_List hook (the semaphore nested): locking now would wipe
+     * the entries the walk is on, so leave the note for the outermost
+     * release, which locks once the walk is over (Franklin, #8) */
+    if (sem.ss_NestCount > 1) { lock_pending = 1; release(); return; }
     gkl_lock(keys);
     release();
 }
@@ -397,6 +407,7 @@ static LONG GK_SetTimeout(REG(d0, ULONG seconds), B)
 static LONG GK_ChangePassphrase(REG(a0, struct Window *win), REG(d0, ULONG flags), B)
 {
     ENTER_F(win, flags);
+    NOT_FROM_HOOK();
     r = gkl_change_pass(keys, owner, NULL, flags);
     LEAVE();
 }
@@ -410,6 +421,7 @@ static LONG GK_Import(REG(a0, CONST struct GKImport *list), REG(d0, ULONG count)
     ULONG i;
     char tag[GK_MAX_OWNER + 1];
     ENTER_F(NULL, flags);
+    NOT_FROM_HOOK();
     if (count > GK_MAX_ENTRIES) { r = GKE_TOOBIG; LEAVE(); }
     if (!count) { r = 0; LEAVE(); }
     if (!(items = AllocVec(count * sizeof *items, MEMF_ANY))) { r = GKE_NOMEM; LEAVE(); }
@@ -433,7 +445,7 @@ static CONST_STRPTR GK_ErrorString(REG(d0, LONG error), B)
         "Too big", "The keys file couldn't be read or written", "Not enough memory", "Cancelled",
         "The crypto or the random source failed",
         "An older copy is open: nothing can be saved until the newer passphrase is used",
-        "Busy: another program's passphrase requester is open. Try again"
+        "Busy: another program's passphrase requester is open, or a list is being walked. Try again"
     };
     (void)base;
     if (error > 0 || error < GKE_BUSY) return (CONST_STRPTR)"Unknown error";
